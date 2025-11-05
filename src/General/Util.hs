@@ -27,7 +27,7 @@ module General.Util(
     general_util_test
     ) where
 
-import Language.Haskell.Exts
+import Language.Haskell.Exts (Pretty, PPHsMode (..), ParseMode (..), Type (..), Name (..), QName (..), SpecialCon (..), Context (..), Asst, InstRule (..), TyVarBind (..), DeclHead (..), InstHead (..), Decl (..), prettyPrintWithMode, defaultMode, PPLayout (..), KnownExtension (..), Extension (..), defaultParseMode, Annotated (..), Boxed (..))
 import Control.Applicative
 import Data.List.Extra
 import Data.Char
@@ -56,6 +56,7 @@ import General.Str
 import Prelude
 import qualified Network.HTTP.Types.URI as URI
 import qualified Data.ByteString.UTF8 as UTF8
+import GHC.Stack (HasCallStack)
 
 
 type PkgName = Str
@@ -263,7 +264,7 @@ prettyTable dp units xs =
         padR n s = s ++ replicate (n - length s) ' '
 
 -- ensure that no value escapes in a thunk from the value
-strict :: NFData a => IO a -> IO a
+strict :: (HasCallStack, NFData a) => IO a -> IO a
 strict act = do
     res <- try_ act
     case res of

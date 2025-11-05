@@ -14,7 +14,7 @@ module Input.Item(
 import Numeric
 import Control.Applicative
 import Data.Tuple.Extra
-import Language.Haskell.Exts
+import Language.Haskell.Exts (Type (..), MaybePromotedName (..), Asst (..), Decl (..), InstRule (..), QName (..), SpecialCon (..))
 import Data.Char
 import Data.List.Extra
 import Data.Maybe

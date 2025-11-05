@@ -36,6 +36,7 @@ import Prelude
 import System.IO.Extra
 import System.IO.MMap
 import System.IO.Unsafe
+import GHC.Stack (HasCallStack)
 
 -- Ensure the string is always 25 chars long, so version numbers don't change its size
 -- Only use the first two components of the version number to identify the database
@@ -166,7 +167,7 @@ data StoreRead = StoreRead
     ,srAtoms :: Map.Map String Atom
     }
 
-storeReadFile :: NFData a => FilePath -> (StoreRead -> IO a) -> IO a
+storeReadFile :: (HasCallStack, NFData a) => FilePath -> (StoreRead -> IO a) -> IO a
 storeReadFile file act = mmapWithFilePtr file ReadOnly Nothing $ \(ptr, len) -> strict $ do
     -- check is longer than my version string
     when (len < (BS.length verString * 2) + intSize) $

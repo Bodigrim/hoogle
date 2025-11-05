@@ -9,7 +9,7 @@ module Query(
     ) where
 
 import Data.List
-import Language.Haskell.Exts
+import Language.Haskell.Exts (Type, ParseResult (..), parseTypeWithMode, Name (..), fromParseResult)
 import Data.Char
 import Text.Blaze
 import qualified Text.Blaze.XHtml5 as H

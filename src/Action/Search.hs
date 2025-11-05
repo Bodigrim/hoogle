@@ -31,6 +31,7 @@ import Output.Names
 import Output.Tags
 import Output.Types
 import Query
+import GHC.Stack (HasCallStack)
 
 -- -- generate all
 -- @tagsoup -- generate tagsoup
@@ -84,7 +85,7 @@ unHTMLtargetItem target = target {targetItem = unHTML $ targetItem target}
 addCounter :: [String] -> [String]
 addCounter = zipWithFrom (\i x -> show i ++ ") " ++ x) 1
 
-withSearch :: NFData a => FilePath -> (StoreRead -> IO a) -> IO a
+withSearch :: (HasCallStack, NFData a) => FilePath -> (StoreRead -> IO a) -> IO a
 withSearch database act = do
     unlessM (doesFileExist database) $ do
         exitFail $ "Error, database does not exist (run 'hoogle generate' first)\n" ++
@@ -149,7 +150,7 @@ action_search_test sample database = testing "Action.Search.search" $ withSearch
         "Ord" === hackage "base/docs/Prelude.html#t:Ord"
         ">>=" === hackage "base/docs/Prelude.html#v:-62--62--61-"
         "sequen" === hackage "base/docs/Prelude.html#v:sequence"
-        "foldl'" === hackage "base/docs/Data-List.html#v:foldl-39-"
+        "foldl'" === hackage "base/docs/Prelude.html#v:foldl-39-"
         "Action package:shake" === "https://hackage.haskell.org/package/shake/docs/Development-Shake.html#t:Action"
         "Action package:shake set:stackage" === "https://hackage.haskell.org/package/shake/docs/Development-Shake.html#t:Action"
         "map -package:base" ==$ \x -> not $ "/base/" `isInfixOf` x
