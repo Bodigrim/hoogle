@@ -9,7 +9,7 @@
 
 module Input.Haddock(parseHoogle, fakePackage, input_haddock_test) where
 
-import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..))
+import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..))
 import Data.Char
 import Data.List.Extra
 import Data.List.NonEmpty qualified as NE
@@ -565,8 +565,18 @@ hsTypeToType = \case
         TyBang () (srcStrictnessToBangType strictness) (srcUnpackednessToUnpackedness unpackedness) (hsTypeToType $ unLoc x)
     HsParTy _ x ->
         TyParen () (hsTypeToType $ unLoc x)
+    HsQualTy _ x y ->
+        TyForall () Nothing (Just $ hsTypesToContext $ unLoc x) (hsTypeToType $ unLoc y)
     ty ->
         error $ show ty
+
+hsTypesToContext
+    :: [GenLocated SrcSpanAnnA (HsType GhcPs)]
+    -> HSE.Context ()
+hsTypesToContext = \case
+    [] -> HSE.CxEmpty ()
+    [x] -> HSE.CxSingle () $ HSE.TypeA () $ hsTypeToType $ unLoc x
+    xs -> HSE.CxTuple () $ map (HSE.TypeA () . hsTypeToType . unLoc) xs
 
 hsTupleSortToBoxed :: HsTupleSort -> Boxed
 hsTupleSortToBoxed = \case
@@ -628,3 +638,5 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "quotRemInt# :: Int# -> Int# -> (# Int#, Int# #)"
     test "( # ) :: Int"
     test "pattern MyPattern :: ()"
+    test "degrees :: Floating x => Radians x -> Degrees x"
+    test "class Angle a"
