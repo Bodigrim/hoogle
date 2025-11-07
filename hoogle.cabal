@@ -69,6 +69,7 @@ library
         js-flot,
         js-jquery,
         mmap,
+        pretty-simple,
         process-extras,
         resourcet,
         safe >= 0.3.20,
