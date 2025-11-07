@@ -9,7 +9,7 @@
 
 module Input.Haddock(parseHoogle, fakePackage, input_haddock_test) where
 
-import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..))
+import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..))
 import Data.Char
 import Data.List.Extra
 import Data.List.NonEmpty qualified as NE
@@ -452,10 +452,10 @@ myParseDeclNew str = case runGhcLibParser str of
     PFailed _state -> ParseFailed HSE.noLoc str
 
 hsDeclToDecl :: HsDecl GhcPs -> Decl ()
-hsDeclToDecl (TyClD _ (SynDecl { tcdLName, tcdRhs })) =
+hsDeclToDecl (TyClD _ (SynDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdRhs })) =
     TypeDecl
         ()
-        (DHead () $ rdrNameToName $ unLoc tcdLName)
+        (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc tcdLName) hsq_explicit)
         (hsTypeToType $ unLoc tcdRhs)
 hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [], dd_kindSig = Nothing } } )) =
     HSE.DataDecl
@@ -496,6 +496,14 @@ hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTv
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
         Nothing
         Nothing
+hsDeclToDecl (TyClD _ (GHC.Hs.ClassDecl { tcdCtxt, tcdLName, tcdTyVars = HsQTvs { hsq_explicit } })) =
+    HSE.ClassDecl
+        ()
+        (fmap (hsTypesToContext . unLoc) tcdCtxt)
+        (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc tcdLName) hsq_explicit)
+        []
+        Nothing
+
 hsDeclToDecl (SigD _ (GHC.Hs.TypeSig _ names (HsWC { hswc_body = L _ HsSig { sig_body } }))) =
     HSE.TypeSig
         ()
@@ -510,10 +518,24 @@ hsDeclToDecl (SigD _ (GHC.Hs.PatSynSig _ names (L _ HsSig { sig_body } ))) =
         Nothing
         Nothing
         (hsTypeToType $ unLoc sig_body)
+hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsSig { sig_body }) } })) = case hsTypeToType (unLoc sig_body)  of
+    TyForall () Nothing ctxt body ->
+        InstDecl
+            ()
+            Nothing
+            (IRule () Nothing ctxt (typeToInstHead body))
+            Nothing
+    body ->
+        InstDecl
+            ()
+            Nothing
+            (IRule () Nothing Nothing (typeToInstHead body))
+            Nothing
 hsDeclToDecl hsDecl = error $ show hsDecl
 
 hsTyVarBndrToTyVarBind
-    :: HsTyVarBndr (HsBndrVis GhcPs) GhcPs
+    :: Show a
+    => HsTyVarBndr a GhcPs
     -> HSE.TyVarBind ()
 hsTyVarBndrToTyVarBind = \case
     HsTvb _ _ (HsBndrVar _ (L _ var)) HsBndrNoKind{} ->
@@ -565,10 +587,18 @@ hsTypeToType = \case
         TyBang () (srcStrictnessToBangType strictness) (srcUnpackednessToUnpackedness unpackedness) (hsTypeToType $ unLoc x)
     HsParTy _ x ->
         TyParen () (hsTypeToType $ unLoc x)
-    HsQualTy _ x y ->
-        TyForall () Nothing (Just $ hsTypesToContext $ unLoc x) (hsTypeToType $ unLoc y)
+    HsQualTy { hst_ctxt, hst_body } ->
+        TyForall () Nothing (Just $ hsTypesToContext $ unLoc hst_ctxt) (hsTypeToType $ unLoc hst_body)
+    HsForAllTy { hst_tele = HsForAllInvis { hsf_invis_bndrs }, hst_body } ->
+        TyForall () (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_invis_bndrs) Nothing (hsTypeToType $ unLoc hst_body)
     ty ->
         error $ show ty
+
+typeToInstHead :: HSE.Type () -> HSE.InstHead ()
+typeToInstHead = \case
+    TyApp () x y -> HSE.IHApp () (typeToInstHead x) y
+    TyCon () x -> HSE.IHCon () x
+    ty -> error $ show ty
 
 hsTypesToContext
     :: [GenLocated SrcSpanAnnA (HsType GhcPs)]
@@ -610,7 +640,7 @@ unGADT x = x
 prettyItem :: Entry -> String
 prettyItem (EPackage x) = "package " ++ strUnpack x
 prettyItem (EModule x) = "module " ++ strUnpack x
-prettyItem (EDecl x) = replace "Tuple3" "(,,)" $ pretty x
+prettyItem (EDecl x) = pretty x
 
 
 input_haddock_test :: IO ()
@@ -625,7 +655,7 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "newtype Identity a"
     test "foo :: Int# -> b"
     test "(,,) :: a -> b -> c -> (a, b, c)"
-    test "data (,,) a b"
+    "data (,,) a b" === "data Tuple3 a b"
     test "reverse :: [a] -> [a]"
     -- Parallel Haskell has never been implemented
     -- test "reverse :: [:a:] -> [:a:]"
@@ -640,3 +670,8 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "pattern MyPattern :: ()"
     test "degrees :: Floating x => Radians x -> Degrees x"
     test "class Angle a"
+    test "instance Eq x => Eq (Degrees x)"
+    test "instance Angle Degrees"
+    test "type Queue a = Deque Nonthreadsafe Nonthreadsafe SingleEnd SingleEnd Grow Safe a"
+    test "class DequeClass d => PopL d"
+    test "tests_fifo :: DequeClass d => (forall elt . IO (d elt)) -> Test"
