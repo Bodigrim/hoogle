@@ -9,7 +9,7 @@
 
 module Input.Haddock(parseHoogle, fakePackage, input_haddock_test) where
 
-import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..))
+import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..), FunDep (..))
 import Data.Char
 import Data.List.Extra
 import Data.List.NonEmpty qualified as NE
@@ -60,6 +60,9 @@ import GHC.Types.Basic (InlinePragma(..), OverlapMode(..), Boxity(..), TopLevelF
 import System.IO.Unsafe (unsafePerformIO)
 import Text.Pretty.Simple (pShow)
 import qualified Data.Text.Lazy as TL
+import GHC.LanguageExtensions.Type (Extension(..))
+import Control.Applicative
+import GHC.Builtin.Types (isCTupleTyConName, cTupleTyConNameArity_maybe)
 
 instance Show OccName where
     show = show . (`runSDoc` defaultSDocContext) . ppr
@@ -114,7 +117,7 @@ deriving instance Show TransForm
 deriving instance Show (DerivClauseTys GhcPs)
 deriving instance Show (HsBndrVis GhcPs)
 deriving instance Show (LHsQTyVars GhcPs)
-deriving instance Show (FunDep GhcPs)
+deriving instance Show (GHC.Hs.FunDep GhcPs)
 deriving instance Show AnnSynDecl
 deriving instance Show AnnClassDecl
 deriving instance Show EpLayout
@@ -457,11 +460,11 @@ hsDeclToDecl (TyClD _ (SynDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, 
         ()
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc tcdLName) hsq_explicit)
         (hsTypeToType $ unLoc tcdRhs)
-hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [], dd_kindSig = Nothing } } )) =
+hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [], dd_ctxt, dd_kindSig = Nothing } } )) =
     HSE.DataDecl
         ()
         (DataType ())
-        Nothing
+        (fmap (hsTypesToContext . unLoc) dd_ctxt)
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc tcdLName) hsq_explicit)
         []
         []
@@ -475,7 +478,7 @@ hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_expl
         []
         []
 hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [ L _ (ConDeclGADT { con_names, con_g_args = PrefixConGADT _ args, con_res_ty }) ] } } )) =
-    GDataDecl
+    HSE.GDataDecl
         ()
         (DataType ())
         Nothing
@@ -496,12 +499,12 @@ hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTv
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
         Nothing
         Nothing
-hsDeclToDecl (TyClD _ (GHC.Hs.ClassDecl { tcdCtxt, tcdLName, tcdTyVars = HsQTvs { hsq_explicit } })) =
+hsDeclToDecl (TyClD _ (GHC.Hs.ClassDecl { tcdCtxt, tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdFDs })) =
     HSE.ClassDecl
         ()
         (fmap (hsTypesToContext . unLoc) tcdCtxt)
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc tcdLName) hsq_explicit)
-        []
+        (map (funDepToFunDep . unLoc) tcdFDs)
         Nothing
 
 hsDeclToDecl (SigD _ (GHC.Hs.TypeSig _ names (HsWC { hswc_body = L _ HsSig { sig_body } }))) =
@@ -532,6 +535,11 @@ hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsS
             (IRule () Nothing Nothing (typeToInstHead body))
             Nothing
 hsDeclToDecl hsDecl = error $ show hsDecl
+
+funDepToFunDep :: GHC.Hs.FunDep GhcPs -> HSE.FunDep ()
+funDepToFunDep = \case
+    GHC.Hs.FunDep _ lhs rhs ->
+        HSE.FunDep () (map (rdrNameToName . unLoc) lhs) (map (rdrNameToName . unLoc) rhs)
 
 hsTyVarBndrToTyVarBind
     :: Show a
@@ -567,12 +575,19 @@ hsTypeToType :: HsType GhcPs -> HSE.Type ()
 hsTypeToType = \case
     HsListTy _ x ->
         TyList () $ hsTypeToType $ unLoc x
+    HsTyVar _ _ (L _ (Exact x))
+        | show x == "[]" ->
+        TyCon () $ Special () $ ListCon ()
+        | Just n <- stripPrefix "Tuple" (occNameString (nameOccName x))
+        , Just n' <- readMay n ->
+        TyCon () $ Special () $ TupleCon () HSE.Boxed n'
     HsTyVar _ _ (L _ x) ->
         case rdrNameSpace x of
             ns
                 | ns == tvName ->
                 TyVar () $ rdrNameToName x
             _ -> TyCon () $ rdrNameToQName x
+            -- _ -> if "Tuple" `isInfixOf` (show $ rdrNameToQName x) then error (show x) else TyCon () $ rdrNameToQName x
     HsAppTy _ x y ->
         TyApp () (hsTypeToType $ unLoc x) (hsTypeToType $ unLoc y)
     HsFunTy _ _ x y ->
@@ -591,6 +606,10 @@ hsTypeToType = \case
         TyForall () Nothing (Just $ hsTypesToContext $ unLoc hst_ctxt) (hsTypeToType $ unLoc hst_body)
     HsForAllTy { hst_tele = HsForAllInvis { hsf_invis_bndrs }, hst_body } ->
         TyForall () (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_invis_bndrs) Nothing (hsTypeToType $ unLoc hst_body)
+    HsExplicitListTy _ _ [x] ->
+        TyList () $ hsTypeToType $ unLoc x
+    HsExplicitTupleTy _ _ xs ->
+        TyTuple () HSE.Boxed (map (hsTypeToType . unLoc) xs)
     ty ->
         error $ show ty
 
@@ -625,10 +644,23 @@ srcUnpackednessToUnpackedness = \case
     SrcNoUnpack -> HSE.NoUnpack ()
     NoSrcUnpack -> HSE.NoUnpackPragma ()
 
-runGhcLibParser :: String -> GHC.Parser.Lexer.ParseResult (GenLocated SrcSpanAnnA (HsDecl GhcPs))
-runGhcLibParser str = unP parseDeclaration parseState
+runGhcLibParser
+    :: String
+    -> GHC.Parser.Lexer.ParseResult (GenLocated SrcSpanAnnA (HsDecl GhcPs))
+runGhcLibParser str = case runGhcLibParserEx allExtensions str of
+    res@POk{} -> res
+    PFailed{} -> runGhcLibParserEx noUnboxed str
     where
-        opts = mkParserOpts (EnumSet.fromList [minBound..maxBound]) emptyDiagOpts [] False False False False
+        allExtensions = EnumSet.fromList [minBound..maxBound]
+        noUnboxed = EnumSet.delete UnboxedSums $ EnumSet.delete UnboxedTuples allExtensions
+
+runGhcLibParserEx
+    :: EnumSet.EnumSet Extension
+    -> String
+    -> GHC.Parser.Lexer.ParseResult (GenLocated SrcSpanAnnA (HsDecl GhcPs))
+runGhcLibParserEx extensions str = unP parseDeclaration parseState
+    where
+        opts = mkParserOpts extensions emptyDiagOpts [] False False False False
         filename = "<interactive>"
         location = mkRealSrcLoc (mkFastString filename) 1 1
         buffer = stringToStringBuffer str
@@ -675,3 +707,9 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "type Queue a = Deque Nonthreadsafe Nonthreadsafe SingleEnd SingleEnd Grow Safe a"
     test "class DequeClass d => PopL d"
     test "tests_fifo :: DequeClass d => (forall elt . IO (d elt)) -> Test"
+    test "class ParUnsafe iv p | p -> iv"
+    "(##) :: Diagram -> Diagram -> Diagram" === "( ## ) :: Diagram -> Diagram -> Diagram"
+    test "instance LayoutClass Positioned []"
+    test "data Ord a => Range a"
+    test "aPair :: Proxy (,)"
+    test "aTriple :: Proxy (,,)"
