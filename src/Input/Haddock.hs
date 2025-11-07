@@ -9,7 +9,7 @@
 
 module Input.Haddock(parseHoogle, fakePackage, input_haddock_test) where
 
-import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..), FunDep (..))
+import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..), FunDep (..), ResultSig (..), Promoted (..), MaybePromotedName (UnpromotedName))
 import Data.Char
 import Data.List.Extra
 import Data.List.NonEmpty qualified as NE
@@ -493,11 +493,17 @@ hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_expl
             (foldr (\(HsScaled _ a) -> TyFun () (hsTypeToType $ unLoc a)) (hsTypeToType $ unLoc con_res_ty) args)
             ) (NE.toList con_names))
         []
-hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTvs { hsq_explicit } } })) =
+hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig = L _ NoSig{} } })) =
     TypeFamDecl
         ()
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
         Nothing
+        Nothing
+hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig = L _ (GHC.Hs.KindSig _ kind) } })) =
+    TypeFamDecl
+        ()
+        (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
+        (Just $ HSE.KindSig () $ hsTypeToType $ unLoc kind)
         Nothing
 hsDeclToDecl (TyClD _ (GHC.Hs.ClassDecl { tcdCtxt, tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdFDs })) =
     HSE.ClassDecl
@@ -521,7 +527,7 @@ hsDeclToDecl (SigD _ (GHC.Hs.PatSynSig _ names (L _ HsSig { sig_body } ))) =
         Nothing
         Nothing
         (hsTypeToType $ unLoc sig_body)
-hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsSig { sig_body }) } })) = case hsTypeToType (unLoc sig_body)  of
+hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsSig { sig_body }) } })) = case hsTypeToType (unLoc sig_body) of
     TyForall () Nothing ctxt body ->
         InstDecl
             ()
@@ -581,13 +587,14 @@ hsTypeToType = \case
         | Just n <- stripPrefix "Tuple" (occNameString (nameOccName x))
         , Just n' <- readMay n ->
         TyCon () $ Special () $ TupleCon () HSE.Boxed n'
-    HsTyVar _ _ (L _ x) ->
+    HsTyVar _ IsPromoted (L _ x) ->
+        TyPromoted () $ HSE.PromotedCon () True $ rdrNameToQName x
+    HsTyVar _ NotPromoted (L _ x) ->
         case rdrNameSpace x of
             ns
                 | ns == tvName ->
                 TyVar () $ rdrNameToName x
             _ -> TyCon () $ rdrNameToQName x
-            -- _ -> if "Tuple" `isInfixOf` (show $ rdrNameToQName x) then error (show x) else TyCon () $ rdrNameToQName x
     HsAppTy _ x y ->
         TyApp () (hsTypeToType $ unLoc x) (hsTypeToType $ unLoc y)
     HsFunTy _ _ x y ->
@@ -605,11 +612,23 @@ hsTypeToType = \case
     HsQualTy { hst_ctxt, hst_body } ->
         TyForall () Nothing (Just $ hsTypesToContext $ unLoc hst_ctxt) (hsTypeToType $ unLoc hst_body)
     HsForAllTy { hst_tele = HsForAllInvis { hsf_invis_bndrs }, hst_body } ->
-        TyForall () (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_invis_bndrs) Nothing (hsTypeToType $ unLoc hst_body)
-    HsExplicitListTy _ _ [x] ->
+        case hsTypeToType (unLoc hst_body) of
+            TyForall () Nothing (Just ctxt) body ->
+                TyForall () (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_invis_bndrs) (Just ctxt) body
+            body ->
+                TyForall () (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_invis_bndrs) Nothing body
+    HsExplicitListTy _ IsPromoted xs ->
+        TyPromoted () $ PromotedList () True (map (hsTypeToType . unLoc) xs)
+    HsExplicitListTy _ NotPromoted [x] ->
         TyList () $ hsTypeToType $ unLoc x
     HsExplicitTupleTy _ _ xs ->
         TyTuple () HSE.Boxed (map (hsTypeToType . unLoc) xs)
+    HsOpTy _ _ x (L _ (Unqual y)) z
+        | occNameString y == "~" ->
+        TyEquals () (hsTypeToType $ unLoc x) (hsTypeToType $ unLoc z)
+    HsOpTy _ _ x (L _ (Exact y)) z
+        | occNameString (nameOccName y) == ":" ->
+        TyInfix () (hsTypeToType $ unLoc x) (UnpromotedName () $ Special () $ Cons ()) (hsTypeToType $ unLoc z)
     ty ->
         error $ show ty
 
@@ -624,7 +643,9 @@ hsTypesToContext
     -> HSE.Context ()
 hsTypesToContext = \case
     [] -> HSE.CxEmpty ()
-    [x] -> HSE.CxSingle () $ HSE.TypeA () $ hsTypeToType $ unLoc x
+    [x] -> case hsTypeToType (unLoc x) of
+        TyParen () ty -> HSE.CxSingle () $ HSE.ParenA () $ HSE.TypeA () ty
+        ty -> HSE.CxSingle () $ HSE.TypeA () ty
     xs -> HSE.CxTuple () $ map (HSE.TypeA () . hsTypeToType . unLoc) xs
 
 hsTupleSortToBoxed :: HsTupleSort -> Boxed
@@ -647,6 +668,9 @@ srcUnpackednessToUnpackedness = \case
 runGhcLibParser
     :: String
     -> GHC.Parser.Lexer.ParseResult (GenLocated SrcSpanAnnA (HsDecl GhcPs))
+runGhcLibParser str
+    | Just (str', ';') <- unsnoc str
+    = runGhcLibParser str'
 runGhcLibParser str = case runGhcLibParserEx allExtensions str of
     res@POk{} -> res
     PFailed{} -> runGhcLibParserEx noUnboxed str
@@ -713,3 +737,11 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "data Ord a => Range a"
     test "aPair :: Proxy (,)"
     test "aTriple :: Proxy (,,)"
+    test "qop :: (Ord a, Show qtyp, Show (QFlipTyp qtyp), QFlipTyp (QFlipTyp qtyp) ~ qtyp) => Set (QueryRep QAtomTyp a) -> Set (QueryRep (QFlipTyp qtyp) a) -> QueryRep qtyp a"
+    test "reorient :: (Unbox a) => Bernsteinp Int a -> Bernsteinp Int a"
+    "type family PrimM a :: * -> *;" === "type family PrimM a :: * -> *"
+    "data Data where HSNil :: HSet '[]" === "data Data where { HSNil :: HSet '[]}"
+    "data Data where HSCons :: !elem -> HSet elems -> HSet (elem : elems)" === "data Data where { HSCons :: !elem -> HSet elems -> HSet (elem : elems)}"
+    test "instance Data.HSet.Reverse.HReverse '[e] els1 els2 => Data.HSet.Reverse.HReverse '[] (e : els1) els2"
+    test "instance Data.HSet.Remove.HRemove (e : els) els 'TypeFun.Data.Peano.Z"
+    "data Data where Free :: (forall m. Monad m => Effects effects m -> m a) -> Free effects a" === "data Data where { Free :: (forall m . Monad m => Effects effects m -> m a) -> Free effects a}"
