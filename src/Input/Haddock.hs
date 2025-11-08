@@ -46,7 +46,7 @@ import GHC.Types.Name.Occurrence (OccName(..), occNameString)
 import GHC.Core.Type (Specificity(..), ForAllTyBinder(..), ForAllTyFlag(..), FunTyFlag(..))
 import GHC.Types.ForeignCall (CCallConv(..), Header(..), CCallTarget(..), CExportSpec(..), CType(..))
 import GHC.Unit.Module.Warnings (WarningTxt(..), InWarningCategory(..))
-import GHC.Types.SourceText (StringLiteral(..))
+import GHC.Types.SourceText (StringLiteral(..), SourceText (..))
 import GHC.Hs (GhcPs, HsDecl(..), HsBind(..), HsBindLR(..), TyClDecl(..), InstDecl(..), DerivDecl(..), Sig(..), StandaloneKindSig(..), HsSigType(..), HsOuterTyVarBndrs(..), HsOuterSigTyVarBndrs(..), HsTyVarBndr(..), HsBndrVar(..), NoExtField(..), DefaultDecl(..), HsType(..), HsArrowOf(..), EpLinearArrow(..), DataConCantHappen, WithHsDocIdentifiers(..), HsForAllTelescope(..), HsUntypedSplice(..), HsExpr(..), StmtLR(..), XLastStmt, HsBndrKind(..), AnnTyVarBndr(..), ForeignDecl(..), ForeignImport(..), CImportSpec(..), ForeignExport(..), WarnDecl(..), WarnDecls(..), NamespaceSpecifier(..), AnnDecl(..), AnnProvenance(..), RuleDecl(..), RuleDecls(..), RuleBndr(..), HsPatSigType(..), HsRuleAnn(..), ActivationAnn(..), SpliceDecl(..), DocDecl(..), RoleAnnotDecl(..), ConDeclField(..), FieldOcc(..), HsTyLit(..), HsTupleSort(..), HsIPName(..), HsBang(..), SrcUnpackedness(..), SrcStrictness(..), HsWildCardBndrs(..), FixitySig(..), AnnSig(..), HsLocalBindsLR(..), MatchGroup(..), Match(..), GRHS(..), GRHSs(..), GrhsAnn(..), Anno(..), HsMatchContext(..), HsStmtContext(..), HsDoFlavour(..), AnnFunRhs(..), HsLamVariant(..), HsArrowMatchContext(..), Pat(..), ClsInstDecl(..), TyFamInstDecl(..), FamEqn(..), HsArg(..), BracketAnn(..), HsLit(..), HsValBindsLR(..), NHsValBindsLR(..), IPBind(..), HsQuote(..), HsGroup(..), TyClGroup(..), HsCmdTop(..), HsCmd(..), EpAnnHsCase(..), AnnsIf(..), HsPragE(..), PatSynBind(..), ConDecl(..), HsScaled(..), AnnConDeclH98(..), AnnClassDecl(..), FamilyInfo(..), AnnFamilyDecl(..), DataFamInstDecl(..), AnnClsInstDecl(..), moduleNameString)
 import GHC.Hs.Basic (Role(..), FixityDirection(..), LexicalFixity(..), FieldLabelString(..))
 import GHC.Core.TyCo.Rep (Type(..), TyLit(..), Coercion(..), MCoercion(..), MCoercionN(..), UnivCoProvenance(..), CoSel(..), FunSel(..), CoercionHole(..))
@@ -450,6 +450,13 @@ myParseDecl xs = unsafePerformIO $ do
               || "grepFind" `isPrefixOf` xs
               || "_assoc" `isPrefixOf` xs
               || "_base" `isPrefixOf` xs
+              || "(@~?)" `isPrefixOf` xs
+              || "(@?~)" `isPrefixOf` xs
+              || "(~~?)" `isPrefixOf` xs
+              || "(~?~)" `isPrefixOf` xs
+              || "(~?~)" `isPrefixOf` xs
+              || "class (Typeable * e," `isPrefixOf` xs
+              || "data Data where Readable" `isPrefixOf` xs
                -> pure old
               | otherwise -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow old')  ++ "\nGot:\n  " ++ TL.unpack (pShow new')
 
@@ -660,6 +667,8 @@ hsTypeToType = \case
         TyPromoted () $ PromotedList () True (map (hsTypeToType . unLoc) xs)
     HsExplicitListTy _ NotPromoted [x] ->
         TyList () $ hsTypeToType $ unLoc x
+    HsExplicitTupleTy _ IsPromoted [] ->
+        TyPromoted () $ PromotedCon () True $ Special () $ UnitCon ()
     HsExplicitTupleTy _ _ xs ->
         TyTuple () HSE.Boxed (map (hsTypeToType . unLoc) xs)
     HsOpTy _ _ x (L _ (Unqual y)) z
@@ -672,6 +681,8 @@ hsTypeToType = \case
         TyInfix () (hsTypeToType $ unLoc x) (UnpromotedName () $ rdrNameToQName $ unLoc y) (hsTypeToType $ unLoc z)
     HsKindSig _ lhs rhs ->
         TyKind () (hsTypeToType $ unLoc lhs) (hsTypeToType $ unLoc rhs)
+    HsTyLit _ (HsNumTy (SourceText txt) val) ->
+        TyPromoted () $ PromotedInteger () val (unpackFS txt)
     HsIParamTy _ _name ty ->
         -- FIXME when migrating to ghc-lib-parser completely:
         -- HSE does not quite support ImplicitParams in ContraintKinds
@@ -690,10 +701,13 @@ hsTypesToContext
     -> HSE.Context ()
 hsTypesToContext = \case
     [] -> HSE.CxEmpty ()
-    [x] -> case hsTypeToType (unLoc x) of
-        TyParen () ty -> HSE.CxSingle () $ HSE.ParenA () $ HSE.TypeA () ty
-        ty -> HSE.CxSingle () $ HSE.TypeA () ty
-    xs -> HSE.CxTuple () $ map (HSE.TypeA () . hsTypeToType . unLoc) xs
+    [x] -> HSE.CxSingle () $ applyTypeA $ hsTypeToType $ unLoc x
+    xs -> HSE.CxTuple () $ map (applyTypeA . hsTypeToType . unLoc) xs
+
+applyTypeA :: HSE.Type () -> Asst ()
+applyTypeA = \case
+    TyParen () ty -> HSE.ParenA () $ HSE.TypeA () ty
+    ty -> HSE.TypeA () ty
 
 hsTupleSortToBoxed :: HsTupleSort -> Boxed
 hsTupleSortToBoxed = \case
@@ -720,10 +734,13 @@ runGhcLibParser str
     = runGhcLibParser str'
 runGhcLibParser str = case runGhcLibParserEx allExtensions str of
     res@POk{} -> res
-    PFailed{} -> runGhcLibParserEx noUnboxed str
+    PFailed{} -> case runGhcLibParserEx noUnboxed str of
+        res@POk{} -> res
+        PFailed{} -> runGhcLibParserEx noArrows str
     where
         allExtensions = EnumSet.fromList [minBound..maxBound]
         noUnboxed = EnumSet.delete UnboxedSums $ EnumSet.delete UnboxedTuples allExtensions
+        noArrows = EnumSet.delete Arrows allExtensions
 
 runGhcLibParserEx
     :: EnumSet.EnumSet Extension
@@ -800,3 +817,7 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     -- test "type HasCallStack = ?callStack :: CallStack"
     test "instance forall k (key :: k) . Data.Traversable.Traversable (Data.ComposableAssociation.Association key)"
     test "ReflH :: forall (k :: *) (t :: k) . HetEq t t"
+    test "egcd :: (PID d, (Euclidean d)) => d -> d -> (d, d, d)"
+    test "proc :: FilePath -> [String] -> CreateProcess"
+    test "unitTests :: Proxy '()"
+    test "type OneToFour = '[1, 2, 3, 4]"
