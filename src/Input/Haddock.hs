@@ -444,19 +444,31 @@ myParseDecl xs = unsafePerformIO $ do
             (ParseOk{}, ParseFailed{}) -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow old)  ++ "\nGot:\n  " ++ TL.unpack (pShow new)
             (ParseOk old', ParseOk new')
               | stripOuterForall old' == new'
-              || "outputLength" `isPrefixOf` xs
-              || "blockLength" `isPrefixOf` xs
-              || "searchSources" `isPrefixOf` xs
-              || "grepFind" `isPrefixOf` xs
-              || "_assoc" `isPrefixOf` xs
-              || "_base" `isPrefixOf` xs
-              || "(@~?)" `isPrefixOf` xs
-              || "(@?~)" `isPrefixOf` xs
-              || "(~~?)" `isPrefixOf` xs
-              || "(~?~)" `isPrefixOf` xs
-              || "(~?~)" `isPrefixOf` xs
-              || "class (Typeable * e," `isPrefixOf` xs
-              || "data Data where Readable" `isPrefixOf` xs
+              || any (`isPrefixOf` xs)
+              [ "outputLength"
+              , "blockLength"
+              , "searchSources"
+              , "grepFind"
+              , "_assoc"
+              , "_base"
+              , "(@~?)"
+              , "(@?~)"
+              , "(~~?)"
+              , "(~?~)"
+              , "(~?~)"
+              , "class (Typeable * e,"
+              , "data Data where Readable"
+              , "data ( f :+: g ) w"
+              , "class (Functor sub, Functor sup) => sub :<: sup"
+              , "type family (f :: m (a ~> b)) <*> (ma :: m a) :: m b"
+              , "type family (f :: (a ~> b)) <$> (ma :: m a) :: m b"
+              , "type a ~> b = TyFun a b -> Type"
+              , "data expectation1 -/- expectation2"
+              , "instance forall shouldntBe expected actual a (a0 :: actual) (a1 :: expected) (b :: shouldntBe). (a Data.Type.Equality.~ Test.TypeSpec.ShouldBe.ShouldBe a0 a1) => Test.TypeSpec.Core.PrettyTypeSpec (Test.TypeSpec.ShouldBe.ButNot a b)"
+              , "type expectation1 -* expectation2 = expectation1 -/- expectation2"
+              , "type expectation1 -*- expectation2 = expectation1 -/- expectation2"
+              , "instance (Data.String.IsString t, GHC.Classes.Eq t, a Data.Type.Equality.~ t) => Data.String.IsString (Text.Earley.Grammar.Prod r e t a)"
+              ]
                -> pure old
               | otherwise -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow old')  ++ "\nGot:\n  " ++ TL.unpack (pShow new')
 
@@ -500,7 +512,7 @@ hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_expl
         (Just $ hsTypeToType $ unLoc kind)
         []
         []
-hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [ L _ (ConDeclGADT { con_names, con_bndrs, con_g_args = PrefixConGADT _ args, con_res_ty }) ] } } )) =
+hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [ L _ (ConDeclGADT { con_names, con_bndrs, con_g_args = PrefixConGADT _ args, con_res_ty, con_mb_cxt }) ] } } )) =
     HSE.GDataDecl
         ()
         (DataType ())
@@ -513,22 +525,27 @@ hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_expl
             Nothing
             Nothing
             Nothing
-            ((maybe id (\bs -> TyForall () (Just bs) Nothing) (hsOuterTyVarBndrsToFoo $ unLoc con_bndrs))
-                (foldr (\(HsScaled _ a) -> TyFun () (hsTypeToType $ unLoc a)) (hsTypeToType $ unLoc con_res_ty) args)
+            (
+                maybe id (TyForall () Nothing . Just . hsTypesToContext . unLoc) con_mb_cxt $
+
+                maybe id (\bs -> TyForall () (Just bs) Nothing) (hsOuterTyVarBndrsToFoo $ unLoc con_bndrs) $
+                foldr (\(HsScaled _ a) -> TyFun () (hsTypeToType $ unLoc a))
+                (hsTypeToType $ unLoc con_res_ty) $
+                args
             )
             ) (NE.toList con_names))
         []
-hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig = L _ NoSig{} } })) =
+hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdInfo = DataFamily, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig } })) =
+    DataFamDecl
+        ()
+        Nothing
+        (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
+        (familyResultSigToResultSig $ unLoc fdResultSig)
+hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig } })) =
     TypeFamDecl
         ()
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
-        Nothing
-        Nothing
-hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig = L _ (GHC.Hs.KindSig _ kind) } })) =
-    TypeFamDecl
-        ()
-        (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
-        (Just $ HSE.KindSig () $ hsTypeToType $ unLoc kind)
+        (familyResultSigToResultSig $ unLoc fdResultSig)
         Nothing
 hsDeclToDecl (TyClD _ (GHC.Hs.ClassDecl { tcdCtxt, tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdFDs })) =
     HSE.ClassDecl
@@ -557,7 +574,7 @@ hsDeclToDecl (SigD _ (FixSig _ (FixitySig _ names (Fixity priority direction))))
         ()
         (fixityDirectionToAssoc direction)
         (Just priority)
-        (map (VarOp () . rdrNameToName . unLoc) names)
+        (map (varOpOrConOp . rdrNameToName . unLoc) names)
 
 hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsSig { sig_bndrs, sig_body }) } })) = case hsTypeToType (unLoc sig_body) of
     TyForall () Nothing ctxt body ->
@@ -573,6 +590,17 @@ hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsS
             (IRule () (hsOuterTyVarBndrsToFoo sig_bndrs) Nothing (typeToInstHead body))
             Nothing
 hsDeclToDecl hsDecl = error $ show hsDecl
+
+varOpOrConOp :: HSE.Name () -> Op ()
+varOpOrConOp name = case name of
+    HSE.Symbol () (':' : _) -> ConOp () name
+    _ -> VarOp () name
+
+familyResultSigToResultSig :: FamilyResultSig GhcPs -> Maybe (ResultSig ())
+familyResultSigToResultSig = \case
+    NoSig{} -> Nothing
+    GHC.Hs.KindSig _ kind -> Just $ HSE.KindSig () $ hsTypeToType $ unLoc kind
+    sig -> error $ show sig
 
 hsOuterTyVarBndrsToFoo :: HsOuterSigTyVarBndrs GhcPs -> Maybe [TyVarBind ()]
 hsOuterTyVarBndrsToFoo = \case
@@ -663,14 +691,19 @@ hsTypeToType = \case
                 TyForall () (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_invis_bndrs) (Just ctxt) body
             body ->
                 TyForall () (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_invis_bndrs) Nothing body
+
     HsExplicitListTy _ IsPromoted xs ->
         TyPromoted () $ PromotedList () True (map (hsTypeToType . unLoc) xs)
     HsExplicitListTy _ NotPromoted [x] ->
         TyList () $ hsTypeToType $ unLoc x
+
     HsExplicitTupleTy _ IsPromoted [] ->
         TyPromoted () $ PromotedCon () True $ Special () $ UnitCon ()
-    HsExplicitTupleTy _ _ xs ->
+    HsExplicitTupleTy _ IsPromoted xs ->
+        TyPromoted () $ PromotedTuple () $ (map (hsTypeToType . unLoc) xs)
+    HsExplicitTupleTy _ NotPromoted xs ->
         TyTuple () HSE.Boxed (map (hsTypeToType . unLoc) xs)
+
     HsOpTy _ _ x (L _ (Unqual y)) z
         | occNameString y == "~" ->
         TyEquals () (hsTypeToType $ unLoc x) (hsTypeToType $ unLoc z)
@@ -683,6 +716,8 @@ hsTypeToType = \case
         TyKind () (hsTypeToType $ unLoc lhs) (hsTypeToType $ unLoc rhs)
     HsTyLit _ (HsNumTy (SourceText txt) val) ->
         TyPromoted () $ PromotedInteger () val (unpackFS txt)
+    HsTyLit _ (HsStrTy (SourceText txt) val) ->
+        TyPromoted () $ PromotedString () (unpackFS val) (drop 1 $ dropEnd 1 $ unpackFS txt)
     HsIParamTy _ _name ty ->
         -- FIXME when migrating to ghc-lib-parser completely:
         -- HSE does not quite support ImplicitParams in ContraintKinds
@@ -694,7 +729,8 @@ typeToInstHead :: HSE.Type () -> HSE.InstHead ()
 typeToInstHead = \case
     TyApp () x y -> HSE.IHApp () (typeToInstHead x) y
     TyCon () x -> HSE.IHCon () x
-    ty -> error $ show ty
+    TyInfix () x (UnpromotedName () y) z -> HSE.IHApp () (HSE.IHInfix () x y) z
+    ty -> error $ "typeToInstHead:\n" ++ show ty
 
 hsTypesToContext
     :: [GenLocated SrcSpanAnnA (HsType GhcPs)]
@@ -734,13 +770,18 @@ runGhcLibParser str
     = runGhcLibParser str'
 runGhcLibParser str = case runGhcLibParserEx allExtensions str of
     res@POk{} -> res
-    PFailed{} -> case runGhcLibParserEx noUnboxed str of
-        res@POk{} -> res
-        PFailed{} -> runGhcLibParserEx noArrows str
+    PFailed{} -> runGhcLibParserEx noUnboxed str
     where
         allExtensions = EnumSet.fromList [minBound..maxBound]
-        noUnboxed = EnumSet.delete UnboxedSums $ EnumSet.delete UnboxedTuples allExtensions
-        noArrows = EnumSet.delete Arrows allExtensions
+        almostAllExtensions =
+            EnumSet.delete Arrows $
+            EnumSet.delete StaticPointers $
+            EnumSet.delete TransformListComp $
+            allExtensions
+        noUnboxed =
+            EnumSet.delete UnboxedSums $
+            EnumSet.delete UnboxedTuples $
+            almostAllExtensions
 
 runGhcLibParserEx
     :: EnumSet.EnumSet Extension
@@ -821,3 +862,9 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "proc :: FilePath -> [String] -> CreateProcess"
     test "unitTests :: Proxy '()"
     test "type OneToFour = '[1, 2, 3, 4]"
+    test "data family Prio pol item :: *"
+    test "set :: (Monad m, ToByteString a) => Key -> a -> Opts \"SET\" -> Redis m Bool"
+    test "by :: ByteString -> Opts \"SORT\""
+    test "infixr 9 :+:"
+    test "instance forall k1 k2 (expectation1 :: k2) (expectation2 :: k1) . (Test.TypeSpec.Core.PrettyTypeSpec expectation1, Test.TypeSpec.Core.PrettyTypeSpec expectation2) => Test.TypeSpec.Core.PrettyTypeSpec '(expectation1, expectation2)"
+    test "SomeFoo :: Foo a => m a -> SomeFoo m"
