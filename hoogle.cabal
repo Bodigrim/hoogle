@@ -115,6 +115,7 @@ library
         Input.Reorder
         Input.Set
         Input.Settings
+        Input.ShowOrphans
         Output.Items
         Output.Names
         Output.Tags
