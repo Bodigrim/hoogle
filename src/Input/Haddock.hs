@@ -297,6 +297,18 @@ myParseDecl xs = unsafePerformIO $ do
               , "data ( (l :: PParser a ~> b) <*> (r :: PParser a) ) (s :: FunKind PState PReply b)"
               , "data ( (l :: PParser a) <|> (r :: PParser a) ) (s :: FunKind PState PReply a)"
               , "data ( (l :: PParser a) >>= (r :: a ~> PParser b) ) (s :: FunKind PState PReply b)"
+              , "data ( c :=>: (f :: k -> Type) ) (a :: k)"
+              , "data (x0_49_0 ∷ k) :\\ (x1_49_1 ∷ k) ∷ Subst"
+              , "pattern TestSeqWitness :: () => forall a. QuantifyConstraints a => a -> TestSequence s -> TestSequence s"
+              , "class (c1 a, c2 a) => ( (c1 :: k -> Constraint) :&&: (c2 :: k -> Constraint) ) (a :: k)"
+              , "data ( (f :: k -> Type) :*: (g :: k -> Type) ) (p :: k)"
+              , "data ( (f :: k -> Type) :+: (g :: k -> Type) ) (p :: k)"
+              , "data Data where Fin :: forall (m :: Nat) (a :: Nat). !Nat m -> !m < a -> Fin a"
+              , "type HighIxN (n :: Natural) = (4 <= n, KnownNat n, KnownNat n - 1, Index IxN n - 1, IxN n - 1 ~ Ix n - 1)"
+              , "data ( (f :: k2 -> Type) :.: (g :: k1 -> k2) ) (p :: k1)"
+              , "data ( (f :: Type -> Type -> Type -> Type) :+: (g :: Type -> Type -> Type -> Type) ) (m :: Type -> Type) k"
+              , "data Data where FastIdx :: !BindId |-> BindPred -> !KIndex |-> KVSub -> !KVar |-> Hyp -> !CMap IBindEnv -> !CMap [SubcId] -> !SEnv Sort -> Index"
+              , "type InterpreterFor (e :: Effect) (r :: [Effect]) = forall a. () => Sem e ': r a -> Sem r a"
               ]
                -> pure old
               | otherwise -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow (flipDHInfix (stripOuterForall old')))  ++ "\nGot:\n  " ++ TL.unpack (pShow new')
@@ -305,6 +317,7 @@ flipDHInfix :: Decl () -> Decl ()
 flipDHInfix = \case
     HSE.TypeDecl () x y -> HSE.TypeDecl () (go x) y
     HSE.DataDecl () x y z t u -> HSE.DataDecl () x y (go z) t u
+    HSE.GDataDecl () x y z t u v -> HSE.GDataDecl () x y (go z) t u v
     HSE.ClassDecl () x y z t -> HSE.ClassDecl () x (go y) z t
     HSE.TypeFamDecl () x y z -> HSE.TypeFamDecl () (go x) y z
     decl -> decl
@@ -629,10 +642,17 @@ hsTypeToType = \case
         TyPromoted () $ PromotedInteger () val (unpackFS txt)
     HsTyLit _ (HsStrTy (SourceText txt) val) ->
         TyPromoted () $ PromotedString () (unpackFS val) (drop 1 $ dropEnd 1 $ unpackFS txt)
+    HsSumTy _ xs ->
+        TyUnboxedSum () $ map (hsTypeToType . unLoc) xs
     HsIParamTy _ _name ty ->
         -- FIXME when migrating to ghc-lib-parser completely:
         -- HSE does not quite support ImplicitParams in ConstraintKinds,
         hsTypeToType $ unLoc ty
+    HsAppKindTy _ x y ->
+        -- FIXME when migrating to ghc-lib-parser completely:
+        -- HSE does not support syntax like
+        -- forall (r :: RuntimeRep) (a :: TYPE r). Maybe# @r a
+        TyApp () (hsTypeToType $ unLoc x) (hsTypeToType $ unLoc y)
     ty ->
         error $ show ty
 
@@ -716,6 +736,7 @@ runGhcLibParser str = case runGhcLibParserEx allExtensions str of
         allExtensions = EnumSet.fromList [minBound..maxBound]
         almostAllExtensions =
             EnumSet.delete Arrows $
+            EnumSet.delete RecursiveDo $
             EnumSet.delete StaticPointers $
             EnumSet.delete TransformListComp
             allExtensions
@@ -825,3 +846,7 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "pattern Stream :: () => () => Repetition"
     test "In# :: (# #) -> In (a :: Effects) (b :: Effects)"
     test "stretchOuter :: forall (s :: Nat) (sh :: [Nat]) (v :: Type -> Type) a . Shape sh => Array (1 ': sh) v a -> Array (s ': sh) v a"
+    test "anyAsciiDecimalWord# :: Addr# -> Addr# -> (# (# #) | (# Word#, Addr# #) #)"
+    test "class SymbolToField (sym :: Symbol) rec typ | sym rec -> typ"
+    -- Cannot faithfully represent @r in HSE
+    -- test "Maybe# :: forall (r :: RuntimeRep) (a :: TYPE r). (# (# #) | a #) -> Maybe# @r a"
