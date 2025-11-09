@@ -14,7 +14,7 @@
 
 module Input.Haddock(parseHoogle, fakePackage, input_haddock_test) where
 
-import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..), FunDep (..), ResultSig (..), Promoted (..), MaybePromotedName (UnpromotedName), Op (..), Assoc (..), IPName (..), FieldDecl (..))
+import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..), FunDep (..), ResultSig (..), Promoted (..), MaybePromotedName (..), Op (..), Assoc (..), IPName (..), FieldDecl (..))
 import Data.Char
 import Data.List.Extra
 import Data.List.NonEmpty qualified as NE
@@ -225,6 +225,9 @@ myParseDecl xs = unsafePerformIO $ do
             (ParseOk{}, ParseFailed{})
                 | not (any (`isPrefixOf` xs)
                     [ "type FT_List"
+                    , "type TransmitPacketFunction"
+                    , "type ProcessPacketFunction"
+                    , "type family (i :: TypeInt) * (i' :: TypeInt) :: TypeInt"
                     ])
                 -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow old)  ++ "\nGot:\n  " ++ TL.unpack (pShow new)
                 | otherwise
@@ -232,6 +235,7 @@ myParseDecl xs = unsafePerformIO $ do
             (ParseOk old', ParseOk new')
               | flipDHInfix (stripOuterForall old') == new'
               || "Data.Type.Equality.~" `isInfixOf` xs
+              || "GHC.Types.~" `isInfixOf` xs
               || any ((`isPrefixOf` xs) . dropWhile isSpace)
               [ "outputLength"
               , "blockLength"
@@ -249,6 +253,9 @@ myParseDecl xs = unsafePerformIO $ do
               , "type expectation1 -* expectation2 = expectation1 -/- expectation2"
               , "type expectation1 -*- expectation2 = expectation1 -/- expectation2"
               , "data a :-> c"
+              , "class (f x, g x) => ( f `And` g ) x"
+              , "class (f (g x)) => ( f `Compose` g ) x"
+              , "data ( f -.-> g ) a"
 
               , "lVec :: forall m n. (KnownNat m, KnownNat n) => L m n -> Vector (m * n) ℝ"
               , "glVec :: (KnownNat m, KnownNat n, Vector v ℝ) => L m n -> Vector v (m * n) ℝ"
@@ -261,12 +268,14 @@ myParseDecl xs = unsafePerformIO $ do
               , "flatten :: forall m' n' m n a. Matrix m' n' (Matrix m n a) -> Matrix (m' * m) (n' * n) a"
               , "intersperse :: a -> NList n a -> NList (Pred (n * 2)) a"
               , "concat :: NList n (NList m a) -> NList (n * m) a"
+              , "(*) :: Proxy i -> Proxy i' -> Proxy (i * i')"
 
-              , "data Data where CorniceCap :: {-# UNPACK #-} !Vector (OneCornice (Cornice h) p a c) -> Cornice h (Cap p) a c"
-              , "data Data where AnnotatedCorniceCap :: !sz -> {-# UNPACK #-} !Vector (OneCornice (AnnotatedCornice sz h) p a c) -> AnnotatedCornice sz h (Cap p) a c"
               , "pattern Cons :: () => Fact (IsCons xs) => (a ~~ Head xs) -> ([a] ~~ Tail xs) -> [a] ~~ xs"
               , "pattern Nil :: () => Fact (IsNil xs) => [a] ~~ xs"
               , "pattern Stream :: () => () => Repetition"
+              , "pattern (:==) :: forall l a. KnownSymbol l => Label l -> a -> Rec (l .== a)"
+              , "pattern (:+) :: forall l r. Disjoint l r => Rec l -> Rec r -> Rec (l .+ r)"
+              , "pattern IsJust :: forall l r. (AllUniqueLabels r, KnownSymbol l) => Label l -> (r .! l) -> Var r"
               ]
                -> pure old
               | otherwise -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow (flipDHInfix (stripOuterForall old')))  ++ "\nGot:\n  " ++ TL.unpack (pShow new')
@@ -275,6 +284,8 @@ flipDHInfix :: Decl () -> Decl ()
 flipDHInfix = \case
     HSE.TypeDecl () x y -> HSE.TypeDecl () (go x) y
     HSE.DataDecl () x y z t u -> HSE.DataDecl () x y (go z) t u
+    HSE.ClassDecl () x y z t -> HSE.ClassDecl () x (go y) z t
+    HSE.TypeFamDecl () x y z -> HSE.TypeFamDecl () (go x) y z
     decl -> decl
     where
         go :: DeclHead () -> DeclHead ()
@@ -536,7 +547,7 @@ hsTypeToType = \case
     HsStarTy _ _ ->
         TyStar ()
     HsBangTy _ (HsBang unpackedness strictness) x ->
-        TyBang () (srcStrictnessToBangType strictness) (srcUnpackednessToUnpackedness unpackedness) (hsTypeToType $ unLoc x)
+        applyTyBang (srcStrictnessToBangType strictness) (srcUnpackednessToUnpackedness unpackedness) (hsTypeToType $ unLoc x)
     HsParTy _ x -> case hsTypeToType (unLoc x) of
         x'@TyKind{} -> x'
         x' -> TyParen () x'
@@ -550,6 +561,8 @@ hsTypeToType = \case
         TyPromoted () $ PromotedList () True (map (hsTypeToType . unLoc) xs)
     HsExplicitListTy _ NotPromoted [x] ->
         TyList () $ hsTypeToType $ unLoc x
+    HsExplicitListTy _ NotPromoted xs ->
+        TyPromoted () $ PromotedList () False (map (hsTypeToType . unLoc) xs)
 
     HsExplicitTupleTy _ IsPromoted [] ->
         TyPromoted () $ PromotedCon () True $ Special () $ UnitCon ()
@@ -564,8 +577,9 @@ hsTypeToType = \case
     HsOpTy _ _ x (L _ (Exact y)) z
         | occNameString (nameOccName y) == ":" ->
         TyInfix () (hsTypeToType $ unLoc x) (UnpromotedName () $ Special () $ Cons ()) (hsTypeToType $ unLoc z)
-    HsOpTy _ _ x y z ->
-        TyInfix () (hsTypeToType $ unLoc x) (UnpromotedName () $ rdrNameToQName $ unLoc y) (hsTypeToType $ unLoc z)
+    HsOpTy _ promotion x y z ->
+        TyInfix () (hsTypeToType $ unLoc x)
+            (promotionFlagToMaybePromotedName promotion $ rdrNameToQName $ unLoc y) (hsTypeToType $ unLoc z)
     HsKindSig _ lhs rhs ->
         TyKind () (hsTypeToType $ unLoc lhs) (hsTypeToType $ unLoc rhs)
     HsTyLit _ (HsNumTy (SourceText txt) val) ->
@@ -574,10 +588,15 @@ hsTypeToType = \case
         TyPromoted () $ PromotedString () (unpackFS val) (drop 1 $ dropEnd 1 $ unpackFS txt)
     HsIParamTy _ _name ty ->
         -- FIXME when migrating to ghc-lib-parser completely:
-        -- HSE does not quite support ImplicitParams in ContraintKinds
+        -- HSE does not quite support ImplicitParams in ContraintKinds,
         hsTypeToType $ unLoc ty
     ty ->
         error $ show ty
+
+promotionFlagToMaybePromotedName :: PromotionFlag -> QName () -> MaybePromotedName ()
+promotionFlagToMaybePromotedName = \case
+    NotPromoted -> UnpromotedName ()
+    IsPromoted -> PromotedName ()
 
 applyTyForall :: Maybe [TyVarBind ()] -> Maybe (Context ()) -> HSE.Type () -> HSE.Type ()
 applyTyForall mArg1 mArg2 = \case
@@ -586,6 +605,15 @@ applyTyForall mArg1 mArg2 = \case
     -- TyForall () mArg1' Nothing ty
     --     | isNothing mArg1 -> TyForall () mArg1' mArg2 ty
     ty -> TyForall () mArg1 mArg2 ty
+
+applyTyBang :: BangType () -> Unpackedness () -> HSE.Type () -> HSE.Type ()
+applyTyBang bang unpack = \case
+    TyBang () (NoStrictAnnot ()) unpack' ty
+        | unpack == NoUnpackPragma () -> TyBang () bang unpack' ty
+    TyBang () bang' (NoUnpackPragma ()) ty
+        | bang == NoStrictAnnot () -> TyBang () bang' unpack ty
+    TyApp () x y -> TyApp () (applyTyBang bang unpack x) y
+    ty -> TyBang () bang unpack ty
 
 typeToInstHead :: HSE.Type () -> HSE.InstHead ()
 typeToInstHead = \case
@@ -743,3 +771,6 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "infixl 3 `And`"
     test "infix 1 `shouldBe`"
     test "pattern The :: The d a => a -> d"
+    test "Html :: Element \"html\" '[] (Elements [\"head\", \"body\"]) (ManifestA & '[])"
+    test "instance forall k1 v1 (pk :: k1 -> GHC.Types.Constraint) (k2 :: k1) (pv :: v1 -> GHC.Types.Constraint) (v2 :: v1) . (pk k2, pv v2) => Type.Membership.KeyTargetAre pk pv (k2 'Type.Membership.Internal.:> v2)"
+    test "crDoubleBuffer :: CompactorReturn s -> {-# UNPACK #-} !DoubleBuffer s"
