@@ -14,7 +14,7 @@
 
 module Input.Haddock(parseHoogle, fakePackage, input_haddock_test) where
 
-import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..), FunDep (..), ResultSig (..), Promoted (..), MaybePromotedName (..), Op (..), Assoc (..), IPName (..), FieldDecl (..))
+import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..), FunDep (..), ResultSig (..), Promoted (..), MaybePromotedName (..), Op (..), Assoc (..), IPName (..), FieldDecl (..), InjectivityInfo (InjectivityInfo))
 import Data.Char
 import Data.List.Extra
 import Data.List.NonEmpty qualified as NE
@@ -47,7 +47,7 @@ import GHC.Types.Name.Reader (RdrName(..), rdrNameOcc, rdrNameSpace)
 import GHC.Unit (GenModule(..))
 import GHC.Types.Name.Occurrence (OccName(..), occNameString)
 import GHC.Types.SourceText (SourceText (..))
-import GHC.Hs (GhcPs, HsDecl(..), TyClDecl(..), InstDecl(..), Sig(..), HsSigType(..), HsOuterTyVarBndrs(..), HsOuterSigTyVarBndrs, HsTyVarBndr(..), HsBndrVar(..), HsType(..), HsForAllTelescope(..), HsBndrKind(..), ConDeclField(..), FieldOcc(..), HsTyLit(..), HsTupleSort(..), HsIPName(..), HsBang(..), SrcUnpackedness(..), SrcStrictness(..), HsWildCardBndrs(..), FixitySig(..), ClsInstDecl(..), ConDecl(..), HsScaled(..), FamilyInfo(..), moduleNameString, hsIPNameFS)
+import GHC.Hs (GhcPs, HsDecl(..), TyClDecl(..), InstDecl(..), Sig(..), HsSigType(..), HsOuterTyVarBndrs(..), HsOuterSigTyVarBndrs, HsTyVarBndr(..), HsBndrVar(..), HsType(..), HsForAllTelescope(..), HsBndrKind(..), ConDeclField(..), FieldOcc(..), HsTyLit(..), HsTupleSort(..), HsIPName(..), HsBang(..), SrcUnpackedness(..), SrcStrictness(..), HsWildCardBndrs(..), FixitySig(..), ClsInstDecl(..), ConDecl(..), HsScaled(..), FamilyInfo(..), moduleNameString, hsIPNameFS, InjectivityAnn (..))
 import GHC.Hs.Basic (FixityDirection(..))
 import GHC.Types.Fixity (Fixity(..))
 import GHC.Hs (FamilyDecl(..), HsDataDefn(..), DataDefnCons(..), HsConDeclGADTDetails(..), LHsQTyVars(..), FunDep(..), FamilyResultSig(..))
@@ -228,6 +228,11 @@ myParseDecl xs = unsafePerformIO $ do
                     , "type TransmitPacketFunction"
                     , "type ProcessPacketFunction"
                     , "type family (i :: TypeInt) * (i' :: TypeInt) :: TypeInt"
+                    , "type family (a :: ExactPi') * (b :: ExactPi') :: ExactPi'"
+                    , "type family (a :: Natural) * (b :: Natural) :: Natural"
+                    , "instance Control.Monad.Reader.Has.GHas 'Data.Path.Here rec (GHC.Generics.K1 i rec)"
+                    , "instance Control.Monad.Except.CoHas.GCoHas 'Data.Path.Here rec (GHC.Generics.K1 i rec)"
+                    , "data ( (a :: Nat) * (b :: Nat) ) (c :: Nat)"
                     ])
                 -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow old)  ++ "\nGot:\n  " ++ TL.unpack (pShow new)
                 | otherwise
@@ -236,6 +241,9 @@ myParseDecl xs = unsafePerformIO $ do
               | flipDHInfix (stripOuterForall old') == new'
               || "Data.Type.Equality.~" `isInfixOf` xs
               || "GHC.Types.~" `isInfixOf` xs
+              || "GHC.Internal.Types.~" `isInfixOf` xs
+              || "%1 ->" `isInfixOf` xs
+              || " * " `isInfixOf` xs
               || any ((`isPrefixOf` xs) . dropWhile isSpace)
               [ "outputLength"
               , "blockLength"
@@ -243,7 +251,6 @@ myParseDecl xs = unsafePerformIO $ do
               , "grepFind"
               , "_assoc"
               , "_base"
-              , "class (Typeable * e,"
               , "data ( f :+: g ) w"
               , "class (Functor sub, Functor sup) => sub :<: sup"
               , "type family (f :: m (a ~> b)) <*> (ma :: m a) :: m b"
@@ -256,26 +263,40 @@ myParseDecl xs = unsafePerformIO $ do
               , "class (f x, g x) => ( f `And` g ) x"
               , "class (f (g x)) => ( f `Compose` g ) x"
               , "data ( f -.-> g ) a"
+              , "data () => ( (f :: k -> Type) :+: (g :: k -> Type) ) (p :: k)"
+              , "data () => ( (f :: k -> Type) :*: (g :: k -> Type) ) (p :: k)"
 
-              , "lVec :: forall m n. (KnownNat m, KnownNat n) => L m n -> Vector (m * n) ℝ"
-              , "glVec :: (KnownNat m, KnownNat n, Vector v ℝ) => L m n -> Vector v (m * n) ℝ"
-              , "vecL :: forall m n. KnownNat n => Vector (m * n) ℝ -> L m n"
-              , "gvecL :: (KnownNat n, Vector v ℝ) => Vector v (m * n) ℝ -> L m n"
-              , "mVec :: forall m n. (KnownNat m, KnownNat n) => M m n -> Vector (m * n) ℂ"
-              , "gmVec :: (KnownNat m, KnownNat n, Vector v ℂ) => M m n -> Vector v (m * n) ℂ"
-              , "vecM :: forall m n. KnownNat n => Vector (m * n) ℂ -> M m n"
-              , "gvecM :: (KnownNat n, Vector v ℂ) => Vector v (m * n) ℂ -> M m n"
-              , "flatten :: forall m' n' m n a. Matrix m' n' (Matrix m n a) -> Matrix (m' * m) (n' * n) a"
-              , "intersperse :: a -> NList n a -> NList (Pred (n * 2)) a"
-              , "concat :: NList n (NList m a) -> NList (n * m) a"
-              , "(*) :: Proxy i -> Proxy i' -> Proxy (i * i')"
-
-              , "pattern Cons :: () => Fact (IsCons xs) => (a ~~ Head xs) -> ([a] ~~ Tail xs) -> [a] ~~ xs"
-              , "pattern Nil :: () => Fact (IsNil xs) => [a] ~~ xs"
-              , "pattern Stream :: () => () => Repetition"
-              , "pattern (:==) :: forall l a. KnownSymbol l => Label l -> a -> Rec (l .== a)"
-              , "pattern (:+) :: forall l r. Disjoint l r => Rec l -> Rec r -> Rec (l .+ r)"
-              , "pattern IsJust :: forall l r. (AllUniqueLabels r, KnownSymbol l) => Label l -> (r .! l) -> Var r"
+              , "class a ~R# b => Coercible (a :: k) (b :: k)"
+              , "data ( (f :: k -> Type) -.-> (g :: k -> Type) ) (a :: k)"
+              , "data ( (f :: l -> Type) :.: (g :: k -> l) ) (p :: k)"
+              , "data ( f :.: g ) x"
+              , "data ( (c :: a -> Exp b) =<< (d :: Exp a) ) (e :: b)"
+              , "data ( (c :: Exp a) >>= (d :: a -> Exp b) ) (e :: b)"
+              , "data ( (d :: b -> Exp c) <=< (e :: a -> Exp b) ) (f :: a) (g :: c)"
+              , "data ( (c :: a -> b) <$> (d :: Exp a) ) (e :: b)"
+              , "data ( (c :: Exp a -> b) <*> (d :: Exp a) ) (e :: b)"
+              , "data ( (c :: a -> Exp b) $ (d :: a) ) (e :: b)"
+              , "data ( (b :: a) .<> (c :: a) ) (d :: a)"
+              , "data ( (a :: Bool) || (b :: Bool) ) (c :: Bool)"
+              , "data ( (a :: Bool) && (b :: Bool) ) (c :: Bool)"
+              , "data ( (a :: b -> Exp c) *** (d :: b' -> Exp c') ) (e :: (b, b')) (f :: (c, c'))"
+              , "data ( (c :: a) & (d :: a -> Exp b) ) (e :: b)"
+              , "data ( (a :: Nat) + (b :: Nat) ) (c :: Nat)"
+              , "data ( (a :: Nat) - (b :: Nat) ) (c :: Nat)"
+              , "data ( (a :: Nat) ^ (b :: Nat) ) (c :: Nat)"
+              , "data ( (a :: Nat) <= (b :: Nat) ) (c :: Bool)"
+              , "data ( (a :: Nat) < (b :: Nat) ) (c :: Bool)"
+              , "data ( (a :: Nat) > (b :: Nat) ) (c :: Bool)"
+              , "data ( (a :: Nat) >= (b :: Nat) ) (c :: Bool)"
+              , "data ( (b :: [a]) ++ (c :: [a]) ) (d :: [a])"
+              , "data ( (b :: a) <= (c :: a) ) (d :: Bool)"
+              , "data ( (b :: a) < (c :: a) ) (d :: Bool)"
+              , "data ( (b :: a) > (c :: a) ) (d :: Bool)"
+              , "data ( (b :: a) >= (c :: a) ) (d :: Bool)"
+              , "data ( (f :: a ~> b) <$> (p :: PParser a) ) (s :: FunKind PState PReply b)"
+              , "data ( (l :: PParser a ~> b) <*> (r :: PParser a) ) (s :: FunKind PState PReply b)"
+              , "data ( (l :: PParser a) <|> (r :: PParser a) ) (s :: FunKind PState PReply a)"
+              , "data ( (l :: PParser a) >>= (r :: a ~> PParser b) ) (s :: FunKind PState PReply b)"
               ]
                -> pure old
               | otherwise -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow (flipDHInfix (stripOuterForall old')))  ++ "\nGot:\n  " ++ TL.unpack (pShow new')
@@ -301,6 +322,8 @@ stripOuterForall = \case
         HSE.TypeSig () i x
     HSE.TypeSig () i (TyForall () Just{} (Just c) x) ->
         HSE.TypeSig () i (TyForall () Nothing (Just c) x)
+    HSE.PatSynSig () name forall1 ctx1 forall2 ctx2 ty ->
+        HSE.PatSynSig () name Nothing ctx1 Nothing ctx2 ty
     decl -> decl
 
 myParseDeclOld :: String -> HSE.ParseResult (Decl ())
@@ -386,12 +409,12 @@ hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdInfo = DataFam
         Nothing
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
         (familyResultSigToResultSig $ unLoc fdResultSig)
-hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig } })) =
+hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig, fdInjectivityAnn } })) =
     TypeFamDecl
         ()
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
         (familyResultSigToResultSig $ unLoc fdResultSig)
-        Nothing
+        (fmap (injectivityAnnToInjectivityInfo . unLoc) fdInjectivityAnn)
 hsDeclToDecl (TyClD _ (GHC.Hs.ClassDecl { tcdCtxt, tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdFDs })) =
     HSE.ClassDecl
         ()
@@ -407,6 +430,15 @@ hsDeclToDecl (SigD _ (GHC.Hs.TypeSig _ names (HsWC { hswc_body = L _ HsSig { sig
         (hsTypeToType $ unLoc sig_body)
 hsDeclToDecl (SigD _ (GHC.Hs.PatSynSig _ names (L _ HsSig { sig_body } ))) =
     case hsTypeToType (unLoc sig_body) of
+        TyForall () Nothing (Just ctx1) (TyForall () Nothing (Just ctx2) ty) ->
+            HSE.PatSynSig
+                ()
+                (map (rdrNameToName . unLoc) names)
+                Nothing
+                (Just ctx1)
+                Nothing
+                (Just ctx2)
+                ty
         TyForall () Nothing (Just ctx) ty ->
             HSE.PatSynSig
                 ()
@@ -447,6 +479,11 @@ hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsS
             Nothing
 hsDeclToDecl hsDecl = error $ show hsDecl
 
+injectivityAnnToInjectivityInfo :: InjectivityAnn GhcPs -> HSE.InjectivityInfo ()
+injectivityAnnToInjectivityInfo = \case
+    InjectivityAnn _ lhs rhs ->
+        HSE.InjectivityInfo () (rdrNameToName $ unLoc lhs) (map (rdrNameToName . unLoc) rhs)
+
 conDeclFieldToFieldDecl :: ConDeclField GhcPs -> HSE.FieldDecl ()
 conDeclFieldToFieldDecl = \case
     ConDeclField {cd_fld_names, cd_fld_type} ->
@@ -467,8 +504,10 @@ varOpOrConOp name = case name of
 familyResultSigToResultSig :: FamilyResultSig GhcPs -> Maybe (ResultSig ())
 familyResultSigToResultSig = \case
     NoSig{} -> Nothing
-    GHC.Hs.KindSig _ kind -> Just $ HSE.KindSig () $ hsTypeToType $ unLoc kind
-    sig -> error $ show sig
+    GHC.Hs.KindSig _ kind ->
+        Just $ HSE.KindSig () $ hsTypeToType $ unLoc kind
+    GHC.Hs.TyVarSig _ tvb ->
+        Just $ HSE.TyVarSig () $ hsTyVarBndrToTyVarBind $ unLoc tvb
 
 hsOuterTyVarBndrsToFoo :: HsOuterSigTyVarBndrs GhcPs -> Maybe [TyVarBind ()]
 hsOuterTyVarBndrsToFoo = \case
@@ -542,8 +581,11 @@ hsTypeToType = \case
         TyFun () (hsTypeToType $ unLoc x) (hsTypeToType $ unLoc y)
     HsTupleTy _ HsBoxedOrConstraintTuple [] ->
         TyCon () $ Special () $ UnitCon ()
+    HsTupleTy _ HsUnboxedTuple [] ->
+        TyCon () $ Special () $ UnboxedSingleCon ()
     HsTupleTy _ boxed xs ->
         TyTuple () (hsTupleSortToBoxed boxed) (map (hsTypeToType . unLoc) xs)
+
     HsStarTy _ _ ->
         TyStar ()
     HsBangTy _ (HsBang unpackedness strictness) x ->
@@ -574,9 +616,10 @@ hsTypeToType = \case
     HsOpTy _ _ x (L _ (Unqual y)) z
         | occNameString y == "~" ->
         TyEquals () (hsTypeToType $ unLoc x) (hsTypeToType $ unLoc z)
-    HsOpTy _ _ x (L _ (Exact y)) z
+    HsOpTy _ promotion x (L _ (Exact y)) z
         | occNameString (nameOccName y) == ":" ->
-        TyInfix () (hsTypeToType $ unLoc x) (UnpromotedName () $ Special () $ Cons ()) (hsTypeToType $ unLoc z)
+        TyInfix () (hsTypeToType $ unLoc x)
+            (promotionFlagToMaybePromotedName promotion $ Special () $ Cons ()) (hsTypeToType $ unLoc z)
     HsOpTy _ promotion x y z ->
         TyInfix () (hsTypeToType $ unLoc x)
             (promotionFlagToMaybePromotedName promotion $ rdrNameToQName $ unLoc y) (hsTypeToType $ unLoc z)
@@ -588,7 +631,7 @@ hsTypeToType = \case
         TyPromoted () $ PromotedString () (unpackFS val) (drop 1 $ dropEnd 1 $ unpackFS txt)
     HsIParamTy _ _name ty ->
         -- FIXME when migrating to ghc-lib-parser completely:
-        -- HSE does not quite support ImplicitParams in ContraintKinds,
+        -- HSE does not quite support ImplicitParams in ConstraintKinds,
         hsTypeToType $ unLoc ty
     ty ->
         error $ show ty
@@ -634,6 +677,8 @@ hsTypeToAsst :: HsType GhcPs -> Asst ()
 hsTypeToAsst = \case
     HsIParamTy _ name t ->
         HSE.IParam () (hsIPNameToIPName $ unLoc name) (hsTypeToType $ unLoc t)
+    HsParTy _ t ->
+        HSE.ParenA () $ hsTypeToAsst $ unLoc t
     t -> case hsTypeToType t of
         TyParen () ty -> HSE.ParenA () $ HSE.TypeA () ty
         ty -> HSE.TypeA () ty
@@ -774,3 +819,9 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "Html :: Element \"html\" '[] (Elements [\"head\", \"body\"]) (ManifestA & '[])"
     test "instance forall k1 v1 (pk :: k1 -> GHC.Types.Constraint) (k2 :: k1) (pv :: v1 -> GHC.Types.Constraint) (v2 :: v1) . (pk k2, pv v2) => Type.Membership.KeyTargetAre pk pv (k2 'Type.Membership.Internal.:> v2)"
     test "crDoubleBuffer :: CompactorReturn s -> {-# UNPACK #-} !DoubleBuffer s"
+    test "expectationFailure :: (?callStack :: CallStack) => String -> Expectation"
+    test "type family MapTyCon t xs = r | r -> xs"
+    test "pattern Id :: CRCategory k => (β ~ α, Object k α) => k α β"
+    test "pattern Stream :: () => () => Repetition"
+    test "In# :: (# #) -> In (a :: Effects) (b :: Effects)"
+    test "stretchOuter :: forall (s :: Nat) (sh :: [Nat]) (v :: Type -> Type) a . Shape sh => Array (1 ': sh) v a -> Array (s ': sh) v a"
