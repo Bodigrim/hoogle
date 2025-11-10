@@ -47,7 +47,7 @@ import GHC.Types.Name.Reader (RdrName(..), rdrNameOcc, rdrNameSpace)
 import GHC.Unit (GenModule(..))
 import GHC.Types.Name.Occurrence (OccName(..), occNameString)
 import GHC.Types.SourceText (SourceText (..))
-import GHC.Hs (GhcPs, HsDecl(..), TyClDecl(..), InstDecl(..), Sig(..), HsSigType(..), HsOuterTyVarBndrs(..), HsOuterSigTyVarBndrs, HsTyVarBndr(..), HsBndrVar(..), HsType(..), HsForAllTelescope(..), HsBndrKind(..), ConDeclField(..), FieldOcc(..), HsTyLit(..), HsTupleSort(..), HsIPName(..), HsBang(..), SrcUnpackedness(..), SrcStrictness(..), HsWildCardBndrs(..), FixitySig(..), ClsInstDecl(..), ConDecl(..), HsScaled(..), FamilyInfo(..), moduleNameString, hsIPNameFS, InjectivityAnn (..))
+import GHC.Hs (GhcPs, HsDecl(..), TyClDecl(..), InstDecl(..), Sig(..), HsSigType(..), HsOuterTyVarBndrs(..), HsOuterSigTyVarBndrs, HsTyVarBndr(..), HsBndrVar(..), HsType(..), HsForAllTelescope(..), HsBndrKind(..), ConDeclField(..), FieldOcc(..), HsTyLit(..), HsTupleSort(..), HsIPName(..), HsBang(..), SrcUnpackedness(..), SrcStrictness(..), HsWildCardBndrs(..), FixitySig(..), ClsInstDecl(..), ConDecl(..), HsScaled(..), FamilyInfo(..), moduleNameString, hsIPNameFS, InjectivityAnn (..), StandaloneKindSig (..))
 import GHC.Hs.Basic (FixityDirection(..))
 import GHC.Types.Fixity (Fixity(..))
 import GHC.Hs (FamilyDecl(..), HsDataDefn(..), DataDefnCons(..), HsConDeclGADTDetails(..), LHsQTyVars(..), FunDep(..), FamilyResultSig(..))
@@ -233,6 +233,8 @@ myParseDecl xs = unsafePerformIO $ do
                     , "instance Control.Monad.Reader.Has.GHas 'Data.Path.Here rec (GHC.Generics.K1 i rec)"
                     , "instance Control.Monad.Except.CoHas.GCoHas 'Data.Path.Here rec (GHC.Generics.K1 i rec)"
                     , "data ( (a :: Nat) * (b :: Nat) ) (c :: Nat)"
+                    , "type family (a :: Dimension) * (b :: Dimension)"
+                    , "type family (v1 :: Variant) * (v2 :: Variant) :: Variant"
                     ])
                 -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow old)  ++ "\nGot:\n  " ++ TL.unpack (pShow new)
                 | otherwise
@@ -244,6 +246,8 @@ myParseDecl xs = unsafePerformIO $ do
               || "GHC.Internal.Types.~" `isInfixOf` xs
               || "%1 ->" `isInfixOf` xs
               || " * " `isInfixOf` xs
+              || "(*)" `isInfixOf` xs
+              || "a69895866216" `isInfixOf` xs
               || any ((`isPrefixOf` xs) . dropWhile isSpace)
               [ "outputLength"
               , "blockLength"
@@ -309,6 +313,27 @@ myParseDecl xs = unsafePerformIO $ do
               , "data ( (f :: Type -> Type -> Type -> Type) :+: (g :: Type -> Type -> Type -> Type) ) (m :: Type -> Type) k"
               , "data Data where FastIdx :: !BindId |-> BindPred -> !KIndex |-> KVSub -> !KVar |-> Hyp -> !CMap IBindEnv -> !CMap [SubcId] -> !SEnv Sort -> Index"
               , "type InterpreterFor (e :: Effect) (r :: [Effect]) = forall a. () => Sem e ': r a -> Sem r a"
+              , "pattern Succ :: forall n. () => forall n1. n ~ Succ n1 => SNat n1 -> SNat n"
+              , "instance Data.Eq.Singletons.PEq (*)"
+              , "instance Data.Singletons.Decide.SDecide (*)"
+              , "data ( (a6989586621679154339 :: b ~> c) .@#@$$$ (a6989586621679154340 :: a ~> b) ) (c1 :: TyFun a c)"
+              , "type family ( (a6989586621679154339 :: b ~> c) .@#@$$$$ (a6989586621679154340 :: a ~> b) ) (a6989586621679154341 :: a) :: c"
+              , "type family ( (a1 :: a ~> m b) >=> (a2 :: b ~> m c) ) (a3 :: a) :: m c"
+              , "type family ( (a1 :: b ~> m c) <=< (a2 :: a ~> m b) ) (a3 :: a) :: m c"
+              , "data ( (a6989586621680354988 :: a ~> m b) >=>@#@$$$ (a6989586621680354989 :: b ~> m c) ) (c1 :: TyFun a m c)"
+              , "data ( (a6989586621680354976 :: b ~> m c) <=<@#@$$$ (a6989586621680354977 :: a ~> m b) ) (c1 :: TyFun a m c)"
+              , "pattern Fold1_ :: forall a b. forall x. (a -> x) -> (x -> a -> x) -> (x -> b) -> Fold1 a b"
+              , "data ( f :+: g ) e"
+              , "type family (a :: Dimension) * (b :: Dimension)"
+              , "pattern (:<) :: forall (f :: Type -> Type) a (n :: Nat). (Dom f a, KnownNat n, CFreeMonoid f) => forall (n1 :: Nat). (n ~ (1 + n1), KnownNat n1) => a -> Sized f n1 a -> Sized f n a"
+              , "pattern (:>) :: forall (f :: Type -> Type) a (n :: Nat). (Dom f a, KnownNat n, CFreeMonoid f) => forall (n1 :: Nat). (n ~ (n1 + 1), KnownNat n1) => Sized f n1 a -> a -> Sized f n a"
+              , "type p --> q = forall a. Sing a -> p @@ a -> q @@ a"
+              , "type ( p --># q ) h = forall a. Sing a -> p @@ a -> h (q @@ a)"
+              , "type p -?> q = forall a. Sing a -> p @@ a -> Decision (q @@ a)"
+              , "instance (c1"
+              , "type ( p -?># q ) h = forall a. Sing a -> p @@ a -> h (Decision (q @@ a))"
+              , "pattern SomeSized :: Vector v a => forall n. KnownNat n => Vector v n a -> v a"
+              , "class (c a, d a) => ( c & d ) a"
               ]
                -> pure old
               | otherwise -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow (flipDHInfix (stripOuterForall old')))  ++ "\nGot:\n  " ++ TL.unpack (pShow new')
@@ -490,6 +515,19 @@ hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsS
             Nothing
             (IRule () (hsOuterTyVarBndrsToFoo sig_bndrs) Nothing (typeToInstHead body))
             Nothing
+
+-- TODO FIXME when migrating to ghc-lib-parser completely:
+-- HSE does not support standalone kind signatures
+hsDeclToDecl (KindSigD _ (StandaloneKindSig _ x y)) =
+   HSE.GDataDecl
+        ()
+        (DataType ())
+        Nothing
+        (DHead () $ rdrNameToName $ unLoc x)
+        (Just $ hsTypeToType $ unLoc $ sig_body $ unLoc y)
+        []
+        []
+
 hsDeclToDecl hsDecl = error $ show hsDecl
 
 injectivityAnnToInjectivityInfo :: InjectivityAnn GhcPs -> HSE.InjectivityInfo ()
@@ -609,9 +647,16 @@ hsTypeToType = \case
     HsQualTy { hst_ctxt, hst_body } ->
         applyTyForall Nothing (Just $ hsTypesToContext $ unLoc hst_ctxt) $
             hsTypeToType $ unLoc hst_body
+
     HsForAllTy { hst_tele = HsForAllInvis { hsf_invis_bndrs }, hst_body } ->
         applyTyForall (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_invis_bndrs) Nothing $
             hsTypeToType $ unLoc hst_body
+    -- TODO FIXME when migrating to ghc-lib-parser completely:
+    -- HSE does not forall with visible binders
+    HsForAllTy { hst_tele = HsForAllVis { hsf_vis_bndrs }, hst_body } ->
+        applyTyForall (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_vis_bndrs) Nothing $
+            hsTypeToType $ unLoc hst_body
+
     HsExplicitListTy _ IsPromoted xs ->
         TyPromoted () $ PromotedList () True (map (hsTypeToType . unLoc) xs)
     HsExplicitListTy _ NotPromoted [x] ->
@@ -644,6 +689,8 @@ hsTypeToType = \case
         TyPromoted () $ PromotedString () (unpackFS val) (drop 1 $ dropEnd 1 $ unpackFS txt)
     HsSumTy _ xs ->
         TyUnboxedSum () $ map (hsTypeToType . unLoc) xs
+    HsWildCardTy _ ->
+        TyWildCard () Nothing
     HsIParamTy _ _name ty ->
         -- FIXME when migrating to ghc-lib-parser completely:
         -- HSE does not quite support ImplicitParams in ConstraintKinds,
@@ -665,8 +712,6 @@ applyTyForall :: Maybe [TyVarBind ()] -> Maybe (Context ()) -> HSE.Type () -> HS
 applyTyForall mArg1 mArg2 = \case
     TyForall () Nothing mArg2' ty
         | isNothing mArg2 -> TyForall () mArg1 mArg2' ty
-    -- TyForall () mArg1' Nothing ty
-    --     | isNothing mArg1 -> TyForall () mArg1' mArg2 ty
     ty -> TyForall () mArg1 mArg2 ty
 
 applyTyBang :: BangType () -> Unpackedness () -> HSE.Type () -> HSE.Type ()
@@ -683,7 +728,9 @@ typeToInstHead = \case
     TyApp () x y -> HSE.IHApp () (typeToInstHead x) y
     TyCon () x -> HSE.IHCon () x
     TyInfix () x (UnpromotedName () y) z -> HSE.IHApp () (HSE.IHInfix () x y) z
-    ty -> error $ "typeToInstHead:\n" ++ show ty
+    -- The rest happens only in ghc-prim, which are likely some magical forms.
+    -- Let's skip them.
+    ty -> HSE.IHCon () $ Special () $ UnitCon ()
 
 hsTypesToContext
     :: [GenLocated SrcSpanAnnA (HsType GhcPs)]
@@ -729,15 +776,20 @@ runGhcLibParser
 runGhcLibParser str
     | Just (str', ';') <- unsnoc str
     = runGhcLibParser str'
-runGhcLibParser str = case runGhcLibParserEx allExtensions str of
-    res@POk{} -> res
-    PFailed{} -> runGhcLibParserEx noUnboxed str
+runGhcLibParser str = case runGhcLibParserEx almostAllExtensions str of
+    PFailed{}
+        | '#' `elem` str -> runGhcLibParserEx noUnboxed str
+    res -> res
     where
         allExtensions = EnumSet.fromList [minBound..maxBound]
         almostAllExtensions =
+            -- This extension makes "proc" a keyword
             EnumSet.delete Arrows $
+            -- This extension makes "mdo" and "rec" keywords
             EnumSet.delete RecursiveDo $
+            -- This extension makes "static" a keyword
             EnumSet.delete StaticPointers $
+            -- This extension makes "by", "group" and "using" keywords
             EnumSet.delete TransformListComp
             allExtensions
         noUnboxed =
@@ -816,8 +868,6 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "instance Data.String.IsString t => Data.String.IsString (t Yi.MiniBuffer.::: doc)"
     test "runValueExpression :: (Functor f) => Expression a ((->) b) f r -> f ((a -> b) -> r)"
     test "HCons :: (x :: *) -> HList xs -> HList (x : xs)"
-    -- Cannot faithfully represent ConstraintKind with ImplicitParams in HSE
-    -- test "type HasCallStack = ?callStack :: CallStack"
     test "instance forall k (key :: k) . Data.Traversable.Traversable (Data.ComposableAssociation.Association key)"
     test "ReflH :: forall (k :: *) (t :: k) . HetEq t t"
     test "egcd :: (PID d, (Euclidean d)) => d -> d -> (d, d, d)"
@@ -848,5 +898,12 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "stretchOuter :: forall (s :: Nat) (sh :: [Nat]) (v :: Type -> Type) a . Shape sh => Array (1 ': sh) v a -> Array (s ': sh) v a"
     test "anyAsciiDecimalWord# :: Addr# -> Addr# -> (# (# #) | (# Word#, Addr# #) #)"
     test "class SymbolToField (sym :: Symbol) rec typ | sym rec -> typ"
+    test "closestPairDist_spec :: _ => ([r] -> r) -> (r -> t) -> [b] -> Property"
+    -- Cannot faithfully represent ConstraintKind with ImplicitParams in HSE
+    -- test "type HasCallStack = ?callStack :: CallStack"
     -- Cannot faithfully represent @r in HSE
     -- test "Maybe# :: forall (r :: RuntimeRep) (a :: TYPE r). (# (# #) | a #) -> Maybe# @r a"
+    -- Cannot faithfully represent visible binders in HSE
+    -- test "data NDFamily_ :: forall (name :: Name) -> forall (ks :: Params name). ParamsProxy name ks -> Res name ks Any :~: r -> Args name ks -> Exp r"
+    -- Cannot faithfully represent standalone kind signatures in HSE
+    -- test "type MinBound :: a;"
