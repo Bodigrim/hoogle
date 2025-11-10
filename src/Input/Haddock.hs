@@ -14,7 +14,7 @@
 
 module Input.Haddock(parseHoogle, fakePackage, input_haddock_test) where
 
-import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), parseDeclWithMode, DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..), FunDep (..), ResultSig (..), Promoted (..), MaybePromotedName (..), Op (..), Assoc (..), IPName (..), FieldDecl (..), InjectivityInfo (InjectivityInfo))
+import Language.Haskell.Exts as HSE (Decl (..), ParseResult (..), GadtDecl (..), Type (..), Name (..), DeclHead (..), DataOrNew (..), noLoc, QName (..), ModuleName (..), TyVarBind (..), Boxed (..), Unpackedness (..), BangType (..), SpecialCon (..), Context (..), Asst (..), InstRule (..), InstHead (..), FunDep (..), ResultSig (..), Promoted (..), MaybePromotedName (..), Op (..), Assoc (..), IPName (..), FieldDecl (..), InjectivityInfo (InjectivityInfo))
 import Data.Char
 import Data.List.Extra
 import Data.List.NonEmpty qualified as NE
@@ -51,9 +51,6 @@ import GHC.Hs (GhcPs, HsDecl(..), TyClDecl(..), InstDecl(..), Sig(..), HsSigType
 import GHC.Hs.Basic (FixityDirection(..))
 import GHC.Types.Fixity (Fixity(..))
 import GHC.Hs (FamilyDecl(..), HsDataDefn(..), DataDefnCons(..), HsConDeclGADTDetails(..), LHsQTyVars(..), FunDep(..), FamilyResultSig(..))
-import System.IO.Unsafe (unsafePerformIO)
-import Text.Pretty.Simple (pShow)
-import qualified Data.Text.Lazy as TL
 import GHC.LanguageExtensions.Type (Extension(..))
 
 -- | An entry in the Hoogle DB
@@ -207,169 +204,7 @@ readItem (stripPrefix "data (" -> Just xs)  -- tuple data type
 readItem _ = Nothing
 
 myParseDecl :: String -> HSE.ParseResult (Decl ())
-myParseDecl xs = unsafePerformIO $ do
-    let old = myParseDeclOld xs
-        new = myParseDeclNew xs
-    evalNew <- try $ evaluate $ new == new
-    case evalNew of
-        Left (err :: SomeException)
-            | not (any (`isPrefixOf` xs)
-                [
-                ])
-            -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow old)  ++ "\nGot:\n  " ++ TL.unpack (pShow err)
-            | otherwise
-            -> pure old
-        Right{} -> case (old, new) of
-            (ParseFailed{}, ParseFailed{}) -> pure old
-            (ParseFailed{}, ParseOk{}) -> pure new
-            (ParseOk{}, ParseFailed{})
-                | not (any (`isPrefixOf` xs)
-                    [ "type FT_List"
-                    , "type TransmitPacketFunction"
-                    , "type ProcessPacketFunction"
-                    , "type family (i :: TypeInt) * (i' :: TypeInt) :: TypeInt"
-                    , "type family (a :: ExactPi') * (b :: ExactPi') :: ExactPi'"
-                    , "type family (a :: Natural) * (b :: Natural) :: Natural"
-                    , "instance Control.Monad.Reader.Has.GHas 'Data.Path.Here rec (GHC.Generics.K1 i rec)"
-                    , "instance Control.Monad.Except.CoHas.GCoHas 'Data.Path.Here rec (GHC.Generics.K1 i rec)"
-                    , "data ( (a :: Nat) * (b :: Nat) ) (c :: Nat)"
-                    , "type family (a :: Dimension) * (b :: Dimension)"
-                    , "type family (v1 :: Variant) * (v2 :: Variant) :: Variant"
-                    ])
-                -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow old)  ++ "\nGot:\n  " ++ TL.unpack (pShow new)
-                | otherwise
-                -> pure old
-            (ParseOk old', ParseOk new')
-              | flipDHInfix (stripOuterForall old') == new'
-              || "Data.Type.Equality.~" `isInfixOf` xs
-              || "GHC.Types.~" `isInfixOf` xs
-              || "GHC.Internal.Types.~" `isInfixOf` xs
-              || "%1 ->" `isInfixOf` xs
-              || " * " `isInfixOf` xs
-              || "(*)" `isInfixOf` xs
-              || "a69895866216" `isInfixOf` xs
-              || any ((`isPrefixOf` xs) . dropWhile isSpace)
-              [ "outputLength"
-              , "blockLength"
-              , "searchSources"
-              , "grepFind"
-              , "_assoc"
-              , "_base"
-              , "data ( f :+: g ) w"
-              , "class (Functor sub, Functor sup) => sub :<: sup"
-              , "type family (f :: m (a ~> b)) <*> (ma :: m a) :: m b"
-              , "type family (f :: (a ~> b)) <$> (ma :: m a) :: m b"
-              , "type a ~> b = TyFun a b -> Type"
-              , "data expectation1 -/- expectation2"
-              , "type expectation1 -* expectation2 = expectation1 -/- expectation2"
-              , "type expectation1 -*- expectation2 = expectation1 -/- expectation2"
-              , "data a :-> c"
-              , "class (f x, g x) => ( f `And` g ) x"
-              , "class (f (g x)) => ( f `Compose` g ) x"
-              , "data ( f -.-> g ) a"
-              , "data () => ( (f :: k -> Type) :+: (g :: k -> Type) ) (p :: k)"
-              , "data () => ( (f :: k -> Type) :*: (g :: k -> Type) ) (p :: k)"
-
-              , "class a ~R# b => Coercible (a :: k) (b :: k)"
-              , "data ( (f :: k -> Type) -.-> (g :: k -> Type) ) (a :: k)"
-              , "data ( (f :: l -> Type) :.: (g :: k -> l) ) (p :: k)"
-              , "data ( f :.: g ) x"
-              , "data ( (c :: a -> Exp b) =<< (d :: Exp a) ) (e :: b)"
-              , "data ( (c :: Exp a) >>= (d :: a -> Exp b) ) (e :: b)"
-              , "data ( (d :: b -> Exp c) <=< (e :: a -> Exp b) ) (f :: a) (g :: c)"
-              , "data ( (c :: a -> b) <$> (d :: Exp a) ) (e :: b)"
-              , "data ( (c :: Exp a -> b) <*> (d :: Exp a) ) (e :: b)"
-              , "data ( (c :: a -> Exp b) $ (d :: a) ) (e :: b)"
-              , "data ( (b :: a) .<> (c :: a) ) (d :: a)"
-              , "data ( (a :: Bool) || (b :: Bool) ) (c :: Bool)"
-              , "data ( (a :: Bool) && (b :: Bool) ) (c :: Bool)"
-              , "data ( (a :: b -> Exp c) *** (d :: b' -> Exp c') ) (e :: (b, b')) (f :: (c, c'))"
-              , "data ( (c :: a) & (d :: a -> Exp b) ) (e :: b)"
-              , "data ( (a :: Nat) + (b :: Nat) ) (c :: Nat)"
-              , "data ( (a :: Nat) - (b :: Nat) ) (c :: Nat)"
-              , "data ( (a :: Nat) ^ (b :: Nat) ) (c :: Nat)"
-              , "data ( (a :: Nat) <= (b :: Nat) ) (c :: Bool)"
-              , "data ( (a :: Nat) < (b :: Nat) ) (c :: Bool)"
-              , "data ( (a :: Nat) > (b :: Nat) ) (c :: Bool)"
-              , "data ( (a :: Nat) >= (b :: Nat) ) (c :: Bool)"
-              , "data ( (b :: [a]) ++ (c :: [a]) ) (d :: [a])"
-              , "data ( (b :: a) <= (c :: a) ) (d :: Bool)"
-              , "data ( (b :: a) < (c :: a) ) (d :: Bool)"
-              , "data ( (b :: a) > (c :: a) ) (d :: Bool)"
-              , "data ( (b :: a) >= (c :: a) ) (d :: Bool)"
-              , "data ( (f :: a ~> b) <$> (p :: PParser a) ) (s :: FunKind PState PReply b)"
-              , "data ( (l :: PParser a ~> b) <*> (r :: PParser a) ) (s :: FunKind PState PReply b)"
-              , "data ( (l :: PParser a) <|> (r :: PParser a) ) (s :: FunKind PState PReply a)"
-              , "data ( (l :: PParser a) >>= (r :: a ~> PParser b) ) (s :: FunKind PState PReply b)"
-              , "data ( c :=>: (f :: k -> Type) ) (a :: k)"
-              , "data (x0_49_0 ∷ k) :\\ (x1_49_1 ∷ k) ∷ Subst"
-              , "pattern TestSeqWitness :: () => forall a. QuantifyConstraints a => a -> TestSequence s -> TestSequence s"
-              , "class (c1 a, c2 a) => ( (c1 :: k -> Constraint) :&&: (c2 :: k -> Constraint) ) (a :: k)"
-              , "data ( (f :: k -> Type) :*: (g :: k -> Type) ) (p :: k)"
-              , "data ( (f :: k -> Type) :+: (g :: k -> Type) ) (p :: k)"
-              , "data Data where Fin :: forall (m :: Nat) (a :: Nat). !Nat m -> !m < a -> Fin a"
-              , "type HighIxN (n :: Natural) = (4 <= n, KnownNat n, KnownNat n - 1, Index IxN n - 1, IxN n - 1 ~ Ix n - 1)"
-              , "data ( (f :: k2 -> Type) :.: (g :: k1 -> k2) ) (p :: k1)"
-              , "data ( (f :: Type -> Type -> Type -> Type) :+: (g :: Type -> Type -> Type -> Type) ) (m :: Type -> Type) k"
-              , "data Data where FastIdx :: !BindId |-> BindPred -> !KIndex |-> KVSub -> !KVar |-> Hyp -> !CMap IBindEnv -> !CMap [SubcId] -> !SEnv Sort -> Index"
-              , "type InterpreterFor (e :: Effect) (r :: [Effect]) = forall a. () => Sem e ': r a -> Sem r a"
-              , "pattern Succ :: forall n. () => forall n1. n ~ Succ n1 => SNat n1 -> SNat n"
-              , "instance Data.Eq.Singletons.PEq (*)"
-              , "instance Data.Singletons.Decide.SDecide (*)"
-              , "data ( (a6989586621679154339 :: b ~> c) .@#@$$$ (a6989586621679154340 :: a ~> b) ) (c1 :: TyFun a c)"
-              , "type family ( (a6989586621679154339 :: b ~> c) .@#@$$$$ (a6989586621679154340 :: a ~> b) ) (a6989586621679154341 :: a) :: c"
-              , "type family ( (a1 :: a ~> m b) >=> (a2 :: b ~> m c) ) (a3 :: a) :: m c"
-              , "type family ( (a1 :: b ~> m c) <=< (a2 :: a ~> m b) ) (a3 :: a) :: m c"
-              , "data ( (a6989586621680354988 :: a ~> m b) >=>@#@$$$ (a6989586621680354989 :: b ~> m c) ) (c1 :: TyFun a m c)"
-              , "data ( (a6989586621680354976 :: b ~> m c) <=<@#@$$$ (a6989586621680354977 :: a ~> m b) ) (c1 :: TyFun a m c)"
-              , "pattern Fold1_ :: forall a b. forall x. (a -> x) -> (x -> a -> x) -> (x -> b) -> Fold1 a b"
-              , "data ( f :+: g ) e"
-              , "type family (a :: Dimension) * (b :: Dimension)"
-              , "pattern (:<) :: forall (f :: Type -> Type) a (n :: Nat). (Dom f a, KnownNat n, CFreeMonoid f) => forall (n1 :: Nat). (n ~ (1 + n1), KnownNat n1) => a -> Sized f n1 a -> Sized f n a"
-              , "pattern (:>) :: forall (f :: Type -> Type) a (n :: Nat). (Dom f a, KnownNat n, CFreeMonoid f) => forall (n1 :: Nat). (n ~ (n1 + 1), KnownNat n1) => Sized f n1 a -> a -> Sized f n a"
-              , "type p --> q = forall a. Sing a -> p @@ a -> q @@ a"
-              , "type ( p --># q ) h = forall a. Sing a -> p @@ a -> h (q @@ a)"
-              , "type p -?> q = forall a. Sing a -> p @@ a -> Decision (q @@ a)"
-              , "instance (c1"
-              , "type ( p -?># q ) h = forall a. Sing a -> p @@ a -> h (Decision (q @@ a))"
-              , "pattern SomeSized :: Vector v a => forall n. KnownNat n => Vector v n a -> v a"
-              , "class (c a, d a) => ( c & d ) a"
-              ]
-               -> pure old
-              | otherwise -> error $ "Parsing\n  " ++ xs ++ "\nExpected:\n  " ++ TL.unpack (pShow (flipDHInfix (stripOuterForall old')))  ++ "\nGot:\n  " ++ TL.unpack (pShow new')
-
-flipDHInfix :: Decl () -> Decl ()
-flipDHInfix = \case
-    HSE.TypeDecl () x y -> HSE.TypeDecl () (go x) y
-    HSE.DataDecl () x y z t u -> HSE.DataDecl () x y (go z) t u
-    HSE.GDataDecl () x y z t u v -> HSE.GDataDecl () x y (go z) t u v
-    HSE.ClassDecl () x y z t -> HSE.ClassDecl () x (go y) z t
-    HSE.TypeFamDecl () x y z -> HSE.TypeFamDecl () (go x) y z
-    decl -> decl
-    where
-        go :: DeclHead () -> DeclHead ()
-        go = \case
-            DHead () x -> DHead () x
-            DHInfix () x y -> DHApp () (DHead () y) x
-            DHParen () x -> DHParen () (go x)
-            DHApp () x y -> DHApp () (go x) y
-
-stripOuterForall :: Decl () -> Decl ()
-stripOuterForall = \case
-    HSE.TypeSig () i (TyForall () Just{} Nothing x) ->
-        HSE.TypeSig () i x
-    HSE.TypeSig () i (TyForall () Just{} (Just c) x) ->
-        HSE.TypeSig () i (TyForall () Nothing (Just c) x)
-    HSE.PatSynSig () name forall1 ctx1 forall2 ctx2 ty ->
-        HSE.PatSynSig () name Nothing ctx1 Nothing ctx2 ty
-    decl -> decl
-
-myParseDeclOld :: String -> HSE.ParseResult (Decl ())
-myParseDeclOld = fmap (fmap $ const ()) . parseDeclWithMode parseMode -- partial application, to share the initialisation cost
-
-
-myParseDeclNew :: String -> HSE.ParseResult (Decl ())
-myParseDeclNew str = case runGhcLibParser str of
+myParseDecl str = case runGhcLibParser str of
     POk _state x -> ParseOk (hsDeclToDecl $ unLoc x)
     PFailed _state -> ParseFailed HSE.noLoc str
 
@@ -895,7 +730,6 @@ input_haddock_test = testing "Input.Haddock.parseLine" $ do
     test "pattern Id :: CRCategory k => (β ~ α, Object k α) => k α β"
     test "pattern Stream :: () => () => Repetition"
     test "In# :: (# #) -> In (a :: Effects) (b :: Effects)"
-    test "stretchOuter :: forall (s :: Nat) (sh :: [Nat]) (v :: Type -> Type) a . Shape sh => Array (1 ': sh) v a -> Array (s ': sh) v a"
     test "anyAsciiDecimalWord# :: Addr# -> Addr# -> (# (# #) | (# Word#, Addr# #) #)"
     test "class SymbolToField (sym :: Symbol) rec typ | sym rec -> typ"
     test "closestPairDist_spec :: _ => ([r] -> r) -> (r -> t) -> [b] -> Property"
