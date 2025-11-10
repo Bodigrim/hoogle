@@ -1,3 +1,10 @@
+-- This is a debug module, omitted by default from Cabal file.
+-- Add it to 'other-modules' and 'import InputShowOrphans ()'
+-- whenever you need to print 'HsDecl' and its components
+-- for debug purposes.
+-- (GHC provides 'instance Outputable', but it's not enough:
+-- it pretty prints while hiding internal structure.)
+
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ImportQualifiedPost #-}
@@ -8,46 +15,26 @@
 
 module Input.ShowOrphans () where
 
-import GHC.Types.SrcLoc (GenLocated)
-import GHC.Utils.Outputable
-    ( Outputable(..), defaultSDocContext, runSDoc )
-import GHC.Parser.Annotation
-    ( EpToken(..),
-      EpLayout(..),
-      AnnList(AnnList),
-      EpUniToken(..),
-      TrailingAnn(..),
-      SrcSpanAnnA,
-      EpAnnComments(..),
-      NoEpAnns(..),
-      EpAnn(EpAnn),
-      AnnContext(AnnContext),
-      AnnListBrackets(..),
-      AnnListItem(AnnListItem),
-      AnnParen(..),
-      AnnPragma(AnnPragma),
-      AnnSortKey(..),
-      NameAdornment(..),
-      NameAnn(..) )
-import GHC.Types.Basic (Activation(..), PromotionFlag(..), LeftOrRight(..), InlinePragma)
+import GHC.Core.Coercion.Axiom (Branches (..), BuiltInFamInjectivity (..), BuiltInFamRewrite (..), CoAxBranch (..), CoAxiom (..), CoAxiomRule (..))
+import GHC.Core.TyCo.Rep (CoSel (..), Coercion (..), CoercionHole (..), FunSel (..), MCoercion (..), MCoercionN, TyLit (..), Type (..), UnivCoProvenance (..))
+import GHC.Core.TyCon (TyCon (..))
+import GHC.Core.Type (ForAllTyBinder, ForAllTyFlag (..), FunTyFlag (..), Specificity (..))
+import GHC.Data.BooleanFormula (BooleanFormula (..))
+import GHC.Hs (ActivationAnn (..), AnnArithSeq (..), AnnClassDecl (..), AnnClsInstDecl (..), AnnConDeclGADT (..), AnnConDeclH98 (..), AnnDataDefn (..), AnnDecl (..), AnnExplicitSum (..), AnnFamilyDecl (..), AnnFieldLabel (..), AnnFunRhs (..), AnnPSB (..), AnnProjection (..), AnnProvenance (..), AnnSig (..), AnnSpecSig (..), AnnSynDecl (..), AnnTransStmt (..), AnnTyVarBndr (..), Anno, AnnsIf (..), ArithSeqInfo (..), BracketAnn (..), CImportSpec (..), ClsInstDecl (..), ConDecl (..), ConDeclField (..), DataConCantHappen, DataDefnCons (..), DataFamInstDecl (..), DefaultDecl (..), DerivClauseTys (..), DerivDecl (..), DerivStrategy (..), DocDecl (..), DotFieldOcc (..), EpAnnHsCase (..), EpAnnLam (..), EpAnnSumPat (..), EpAnnUnboundVar (..), EpLinearArrow (..), FamEqn (..), FamilyDecl (..), FamilyInfo (..), FamilyResultSig (..), FieldLabelStrings (..), FieldOcc (..), FixitySig (..), ForeignDecl (..), ForeignExport (..), ForeignImport (..), FunDep (..), GRHS (..), GRHSs (..), GhcPs, GrhsAnn (..), HsArg (..), HsArrAppType (..), HsArrowMatchContext (..), HsArrowOf (..), HsBang (..), HsBind, HsBindLR (..), HsBndrKind (..), HsBndrVar (..), HsBndrVis (..), HsCmd (..), HsCmdTop (..), HsConDeclGADTDetails (..), HsConDetails (..), HsConPatTyArg (..), HsDataDefn (..), HsDecl (..), HsDerivingClause (..), HsDoFlavour (..), HsExpr (..), HsFieldBind (..), HsForAllTelescope (..), HsGroup (..), HsIPBinds (..), HsIPName (..), HsLamVariant (..), HsLit (..), HsLocalBindsLR (..), HsMatchContext (..), HsMultAnn (..), HsOuterTyVarBndrs (..), HsOverLit (..), HsPatSigType (..), HsPatSynDir (..), HsPragE (..), HsQuote (..), HsRecFields (..), HsRuleAnn (..), HsScaled (..), HsSigType (..), HsStmtContext (..), HsTupArg (..), HsTupleSort (..), HsTyLit (..), HsTyPat (..), HsTyVarBndr (..), HsType (..), HsUntypedSplice (..), HsValBindsLR (..), HsWildCardBndrs (..), IPBind (..), InjectivityAnn (..), InstDecl (..), LHsQTyVars (..), LHsRecUpdFields (..), Match (..), MatchGroup (..), NHsValBindsLR (..), NamespaceSpecifier (..), NoExtField (..), OverLitVal (..), ParStmtBlock (..), Pat (..), PatSynBind (..), RecFieldsDotDot (..), RecordPatSynField (..), RoleAnnotDecl (..), RuleBndr (..), RuleDecl (..), RuleDecls (..), Sig (..), SpliceDecl (..), SrcStrictness (..), SrcUnpackedness (..), StandaloneKindSig (..), StmtLR (..), TransForm (..), TyClDecl (..), TyClGroup (..), TyFamInstDecl (..), WarnDecl (..), WarnDecls (..), WithHsDocIdentifiers (..), XViaStrategyPs (..))
+import GHC.Hs.Basic (FieldLabelString (..), FixityDirection (..), LexicalFixity (..), Role (..))
+import GHC.Parser.Annotation (AnnContext (..), AnnList (..), AnnListBrackets (..), AnnListItem (..), AnnParen (..), AnnPragma (..), AnnSortKey (..), EpAnn (..), EpAnnComments (..), EpLayout (..), EpToken (..), EpUniToken (..), NameAdornment (..), NameAnn (..), NoEpAnns (..), SrcSpanAnnA, TrailingAnn (.. )
+import GHC.Types.Basic (Activation (..), Boxity (..), DoPmc (..), GenReason (..), InlinePragma (..), LeftOrRight (..), Origin (..), OverlapMode (..), PromotionFlag (..), RecFlag (..), TopLevelFlag (..))
+import GHC.Types.Fixity (Fixity (..))
+import GHC.Types.ForeignCall (CCallConv (..), CCallTarget (..), CExportSpec (..), CType (..), Header (..))
 import GHC.Types.Name (Name)
-import GHC.Types.Name.Reader (RdrName(..))
-import GHC.Unit (GenModule(..), Module)
-import GHC.Types.Name.Occurrence (OccName(..))
-import GHC.Core.Type (Specificity(..), ForAllTyBinder, ForAllTyFlag(..), FunTyFlag(..))
-import GHC.Types.ForeignCall (CCallConv(..), Header(..), CCallTarget(..), CExportSpec(..), CType(..))
-import GHC.Unit.Module.Warnings (WarningTxt(..), InWarningCategory(..))
-import GHC.Types.SourceText (StringLiteral(..))
-import GHC.Hs (GhcPs, HsDecl(..), HsBind, HsBindLR(..), TyClDecl(..), InstDecl(..), DerivDecl(..), Sig(..), StandaloneKindSig(..), HsSigType(..), HsOuterTyVarBndrs(..), HsTyVarBndr(..), HsBndrVar(..), NoExtField(..), DefaultDecl(..), HsType(..), HsArrowOf(..), EpLinearArrow(..), DataConCantHappen, WithHsDocIdentifiers(..), HsForAllTelescope(..), HsUntypedSplice(..), HsExpr(..), StmtLR(..), HsBndrKind(..), AnnTyVarBndr(..), ForeignDecl(..), ForeignImport(..), CImportSpec(..), ForeignExport(..), WarnDecl(..), WarnDecls(..), NamespaceSpecifier(..), AnnDecl(..), AnnProvenance(..), RuleDecl(..), RuleDecls(..), RuleBndr(..), HsPatSigType(..), HsRuleAnn(..), ActivationAnn(..), SpliceDecl(..), DocDecl(..), RoleAnnotDecl(..), ConDeclField(..), FieldOcc(..), HsTyLit(..), HsTupleSort(..), HsIPName(..), HsBang(..), SrcUnpackedness(..), SrcStrictness(..), HsWildCardBndrs(..), FixitySig(..), AnnSig(..), HsLocalBindsLR(..), MatchGroup(..), Match(..), GRHS(..), GRHSs(..), GrhsAnn(..), Anno, HsMatchContext(..), HsStmtContext(..), HsDoFlavour(..), AnnFunRhs(..), HsLamVariant(..), HsArrowMatchContext(..), Pat(..), ClsInstDecl(..), TyFamInstDecl(..), FamEqn(..), HsArg(..), BracketAnn(..), HsLit(..), HsValBindsLR(..), NHsValBindsLR(..), IPBind(..), HsQuote(..), HsGroup(..), TyClGroup(..), HsCmdTop(..), HsCmd(..), EpAnnHsCase(..), AnnsIf(..), HsPragE(..), PatSynBind(..), ConDecl(..), HsScaled(..), AnnConDeclH98(..), AnnClassDecl(..), FamilyInfo(..), AnnFamilyDecl(..), DataFamInstDecl(..), AnnClsInstDecl(..))
-import GHC.Hs.Basic (Role(..), FixityDirection(..), LexicalFixity(..), FieldLabelString(..))
-import GHC.Core.TyCo.Rep (Type(..), TyLit(..), Coercion(..), MCoercion(..), MCoercionN, UnivCoProvenance(..), CoSel(..), FunSel(..), CoercionHole(..))
-import GHC.Types.Var (VarBndr(..), Var(..))
-import GHC.Core.TyCon (TyCon(..))
-import GHC.Core.Coercion.Axiom (CoAxiomRule(..), CoAxiom(..), Branches(..), CoAxBranch(..), BuiltInFamRewrite(..), BuiltInFamInjectivity(..))
-import GHC.Data.BooleanFormula (BooleanFormula(..))
-import GHC.Types.Fixity (Fixity(..))
-import GHC.Hs (AnnSpecSig(..), DerivStrategy(..), XViaStrategyPs(..), HsRecFields(..), HsFieldBind(..), RecFieldsDotDot(..), HsOverLit(..), OverLitVal(..), HsTupArg(..), HsIPBinds(..), LHsRecUpdFields(..), FieldLabelStrings(..), DotFieldOcc(..), AnnFieldLabel(..), ArithSeqInfo(..), HsArrAppType(..), EpAnnLam(..), EpAnnUnboundVar(..), AnnExplicitSum(..), AnnProjection(..), AnnArithSeq(..), ParStmtBlock(..), AnnTransStmt(..), TransForm(..), HsMultAnn(..), HsConDetails(..), HsConPatTyArg(..), HsTyPat(..), EpAnnSumPat(..), FamilyDecl(..), HsDataDefn(..), DataDefnCons(..), HsConDeclGADTDetails(..), AnnConDeclGADT(..), HsDerivingClause(..), DerivClauseTys(..), AnnDataDefn(..), LHsQTyVars(..), HsBndrVis(..), FunDep(..), AnnSynDecl(..), FamilyResultSig(..), InjectivityAnn(..), RecordPatSynField(..), HsPatSynDir(..), AnnPSB(..))
-import GHC.Types.Basic (InlinePragma(..), OverlapMode(..), Boxity(..), TopLevelFlag(..), Origin(..), GenReason(..), DoPmc(..), RecFlag(..))
+import GHC.Types.Name.Occurrence (OccName (..))
+import GHC.Types.Name.Reader (RdrName (..))
+import GHC.Types.SourceText (StringLiteral (..))
+import GHC.Types.SrcLoc (GenLocated)
+import GHC.Types.Var (Var (..), VarBndr (..))
+import GHC.Unit (GenModule (..), Module)
+import GHC.Unit.Module.Warnings (InWarningCategory (..), WarningTxt (..))
+import GHC.Utils.Outputable (Outputable (..), defaultSDocContext, runSDoc )
 
 instance Show OccName where
     show = show . (`runSDoc` defaultSDocContext) . ppr
@@ -97,7 +84,7 @@ deriving instance Show (DataFamInstDecl GhcPs)
 deriving instance Show (InstDecl GhcPs)
 deriving instance Show AnnClsInstDecl
 deriving instance Show (ClsInstDecl GhcPs)
-deriving instance Show a => Show (AnnSortKey a)
+deriving instance (Show a) => Show (AnnSortKey a)
 deriving instance Show TransForm
 deriving instance Show (DerivClauseTys GhcPs)
 deriving instance Show (HsBndrVis GhcPs)
@@ -115,8 +102,8 @@ deriving instance Show EpAnnSumPat
 deriving instance Show (HsTyPat GhcPs)
 deriving instance Show (HsConPatTyArg GhcPs)
 deriving instance Show (Pat GhcPs)
-deriving instance Show a => Show (DataDefnCons a)
-deriving instance Show a => Show (HsScaled GhcPs a)
+deriving instance (Show a) => Show (DataDefnCons a)
+deriving instance (Show a) => Show (HsScaled GhcPs a)
 deriving instance Show AnnConDeclGADT
 deriving instance Show AnnConDeclH98
 deriving instance Show (HsConDeclGADTDetails GhcPs)
@@ -126,8 +113,8 @@ deriving instance Show (StmtLR GhcPs GhcPs (GenLocated SrcSpanAnnA (HsExpr GhcPs
 deriving instance Show (StmtLR GhcPs GhcPs (GenLocated SrcSpanAnnA (HsCmd GhcPs)))
 deriving instance Show (HsForAllTelescope GhcPs)
 deriving instance Show (HsUntypedSplice GhcPs)
-deriving instance Show a => Show (WithHsDocIdentifiers a GhcPs)
-deriving instance Show a => Show (HsArrowOf a GhcPs)
+deriving instance (Show a) => Show (WithHsDocIdentifiers a GhcPs)
+deriving instance (Show a) => Show (HsArrowOf a GhcPs)
 deriving instance Show (HsIPBinds GhcPs)
 deriving instance Show Boxity
 deriving instance Show EpAnnUnboundVar
@@ -151,23 +138,23 @@ deriving instance Show (HsQuote GhcPs)
 deriving instance Show (LHsRecUpdFields GhcPs)
 deriving instance Show (HsLocalBindsLR GhcPs GhcPs)
 deriving instance Show HsArrowMatchContext
-deriving instance Show a => Show (HsStmtContext a)
+deriving instance (Show a) => Show (HsStmtContext a)
 deriving instance (Show a, Show b) => Show (HsFieldBind a b)
 deriving instance (Show a, Show b) => Show (BracketAnn a b)
 deriving instance Show OverLitVal
 deriving instance Show (HsOverLit GhcPs)
 deriving instance Show (HsLit GhcPs)
 deriving instance Show (HsTupArg GhcPs)
-deriving instance Show a => Show (HsRecFields GhcPs a)
+deriving instance (Show a) => Show (HsRecFields GhcPs a)
 deriving instance Show RecFieldsDotDot
-deriving instance Show a => Show (AnnList a)
-deriving instance Show a => Show (HsMatchContext a)
+deriving instance (Show a) => Show (AnnList a)
+deriving instance (Show a) => Show (HsMatchContext a)
 deriving instance Show GrhsAnn
-deriving instance Show a => Show (GRHS GhcPs a)
+deriving instance (Show a) => Show (GRHS GhcPs a)
 deriving instance (Show a, Show (Anno (GRHS GhcPs a))) => Show (GRHSs GhcPs a)
 deriving instance Show Role
 deriving instance (Show a, Show b) => Show (HsArg GhcPs a b)
-deriving instance Show a => Show (FamEqn GhcPs a)
+deriving instance (Show a) => Show (FamEqn GhcPs a)
 deriving instance Show (TyFamInstDecl GhcPs)
 deriving instance Show OverlapMode
 deriving instance Show XViaStrategyPs
@@ -182,12 +169,12 @@ deriving instance Show HsDoFlavour
 deriving instance Show LexicalFixity
 deriving instance Show AnnFunRhs
 deriving instance Show HsLamVariant
-deriving instance Show a => Show (HsWildCardBndrs GhcPs a)
-deriving instance Show a => Show (BooleanFormula a)
+deriving instance (Show a) => Show (HsWildCardBndrs GhcPs a)
+deriving instance (Show a) => Show (BooleanFormula a)
 deriving instance Show FixityDirection
 deriving instance Show GHC.Types.Fixity.Fixity
 deriving instance Show (FixitySig GhcPs)
-deriving instance Show (Branches a) => Show (CoAxiom a)
+deriving instance (Show (Branches a)) => Show (CoAxiom a)
 deriving instance Show CoAxiomRule
 deriving instance Show UnivCoProvenance
 deriving instance Show FunSel
@@ -223,7 +210,7 @@ deriving instance Show (SpliceDecl GhcPs)
 deriving instance Show (EpUniToken a b)
 deriving instance Show (EpToken a)
 deriving instance Show EpAnnComments
-deriving instance Show a => Show (EpAnn a)
+deriving instance (Show a) => Show (EpAnn a)
 deriving instance Show TrailingAnn
 deriving instance Show NameAdornment
 deriving instance Show NameAnn
@@ -238,8 +225,8 @@ deriving instance Show DataConCantHappen
 deriving instance Show AnnTyVarBndr
 deriving instance Show (HsBndrVar GhcPs)
 deriving instance Show (HsBndrKind GhcPs)
-deriving instance Show a => Show (HsTyVarBndr a GhcPs)
-deriving instance Show a => Show (HsOuterTyVarBndrs a GhcPs)
+deriving instance (Show a) => Show (HsTyVarBndr a GhcPs)
+deriving instance (Show a) => Show (HsOuterTyVarBndrs a GhcPs)
 deriving instance Show (HsSigType GhcPs)
 deriving instance Show (StandaloneKindSig GhcPs)
 deriving instance Show CCallConv

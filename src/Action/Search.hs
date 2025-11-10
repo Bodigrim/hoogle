@@ -31,7 +31,6 @@ import Output.Names
 import Output.Tags
 import Output.Types
 import Query
-import GHC.Stack (HasCallStack)
 
 -- -- generate all
 -- @tagsoup -- generate tagsoup
@@ -85,7 +84,7 @@ unHTMLtargetItem target = target {targetItem = unHTML $ targetItem target}
 addCounter :: [String] -> [String]
 addCounter = zipWithFrom (\i x -> show i ++ ") " ++ x) 1
 
-withSearch :: (HasCallStack, NFData a) => FilePath -> (StoreRead -> IO a) -> IO a
+withSearch :: NFData a => FilePath -> (StoreRead -> IO a) -> IO a
 withSearch database act = do
     unlessM (doesFileExist database) $ do
         exitFail $ "Error, database does not exist (run 'hoogle generate' first)\n" ++
