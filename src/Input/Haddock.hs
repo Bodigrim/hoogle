@@ -47,7 +47,7 @@ import GHC.Types.Name.Reader (RdrName(..), rdrNameOcc, rdrNameSpace)
 import GHC.Unit (GenModule(..))
 import GHC.Types.Name.Occurrence (OccName(..), occNameString)
 import GHC.Types.SourceText (SourceText (..))
-import GHC.Hs (GhcPs, HsDecl(..), TyClDecl(..), InstDecl(..), Sig(..), HsSigType(..), HsOuterTyVarBndrs(..), HsOuterSigTyVarBndrs, HsTyVarBndr(..), HsBndrVar(..), HsType(..), HsForAllTelescope(..), HsBndrKind(..), ConDeclField(..), FieldOcc(..), HsTyLit(..), HsTupleSort(..), HsIPName(..), HsBang(..), SrcUnpackedness(..), SrcStrictness(..), HsWildCardBndrs(..), FixitySig(..), ClsInstDecl(..), ConDecl(..), HsScaled(..), FamilyInfo(..), moduleNameString, hsIPNameFS, InjectivityAnn (..), StandaloneKindSig (..))
+import GHC.Hs (GhcPs, HsDecl(..), TyClDecl(..), InstDecl(..), Sig(..), HsSigType(..), HsOuterTyVarBndrs(..), HsOuterSigTyVarBndrs, HsTyVarBndr(..), HsBndrVar(..), HsType(..), HsForAllTelescope(..), HsBndrKind(..), ConDeclField(..), FieldOcc(..), HsTyLit(..), HsTupleSort(..), HsIPName(..), HsBang(..), SrcUnpackedness(..), SrcStrictness(..), HsWildCardBndrs(..), FixitySig(..), ClsInstDecl(..), ConDecl(..), HsScaled(..), FamilyInfo(..), moduleNameString, hsIPNameFS, InjectivityAnn (..))
 import GHC.Hs.Basic (FixityDirection(..))
 import GHC.Types.Fixity (Fixity(..))
 import GHC.Hs (FamilyDecl(..), HsDataDefn(..), DataDefnCons(..), HsConDeclGADTDetails(..), LHsQTyVars(..), FunDep(..), FamilyResultSig(..))
@@ -205,17 +205,19 @@ readItem _ = Nothing
 
 myParseDecl :: String -> HSE.ParseResult (Decl ())
 myParseDecl str = case runGhcLibParser str of
-    POk _state x -> ParseOk (hsDeclToDecl $ unLoc x)
+    POk _state x -> case hsDeclToDecl (unLoc x) of
+        Nothing -> ParseFailed HSE.noLoc str
+        Just res -> ParseOk res
     PFailed _state -> ParseFailed HSE.noLoc str
 
-hsDeclToDecl :: HsDecl GhcPs -> Decl ()
+hsDeclToDecl :: HsDecl GhcPs -> Maybe (Decl ())
 hsDeclToDecl (TyClD _ (SynDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdRhs })) =
-    TypeDecl
+    Just $ TypeDecl
         ()
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc tcdLName) hsq_explicit)
         (hsTypeToType $ unLoc tcdRhs)
 hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [], dd_ctxt, dd_kindSig = Nothing } } )) =
-    HSE.DataDecl
+    Just $ HSE.DataDecl
         ()
         (DataType ())
         (fmap (hsTypesToContext . unLoc) dd_ctxt)
@@ -223,7 +225,7 @@ hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_expl
         []
         []
 hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [], dd_kindSig = Just kind } } )) =
-    HSE.GDataDecl
+    Just $ HSE.GDataDecl
         ()
         (DataType ())
         Nothing
@@ -233,7 +235,7 @@ hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_expl
         []
 
 hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [ L _ (ConDeclGADT { con_names, con_bndrs, con_g_args = PrefixConGADT _ args, con_res_ty, con_mb_cxt }) ] } } )) =
-    HSE.GDataDecl
+    Just $ HSE.GDataDecl
         ()
         (DataType ())
         Nothing
@@ -255,7 +257,7 @@ hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_expl
             ) (NE.toList con_names))
         []
 hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdDataDefn = HsDataDefn { dd_cons = DataTypeCons _ [ L _ (ConDeclGADT { con_names, con_bndrs, con_g_args = RecConGADT _ (L _ args), con_res_ty, con_mb_cxt }) ] } } )) =
-    HSE.GDataDecl
+    Just $ HSE.GDataDecl
         ()
         (DataType ())
         Nothing
@@ -277,19 +279,19 @@ hsDeclToDecl (TyClD _ (GHC.Hs.DataDecl { tcdLName, tcdTyVars = HsQTvs { hsq_expl
         []
 
 hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdInfo = DataFamily, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig } })) =
-    DataFamDecl
+    Just $ DataFamDecl
         ()
         Nothing
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
         (familyResultSigToResultSig $ unLoc fdResultSig)
 hsDeclToDecl (TyClD _ (FamDecl { tcdFam = FamilyDecl { fdLName, fdTyVars = HsQTvs { hsq_explicit }, fdResultSig, fdInjectivityAnn } })) =
-    TypeFamDecl
+    Just $ TypeFamDecl
         ()
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc fdLName) hsq_explicit)
         (familyResultSigToResultSig $ unLoc fdResultSig)
         (fmap (injectivityAnnToInjectivityInfo . unLoc) fdInjectivityAnn)
 hsDeclToDecl (TyClD _ (GHC.Hs.ClassDecl { tcdCtxt, tcdLName, tcdTyVars = HsQTvs { hsq_explicit }, tcdFDs })) =
-    HSE.ClassDecl
+    Just $ HSE.ClassDecl
         ()
         (fmap (hsTypesToContext . unLoc) tcdCtxt)
         (foldl' (\acc (L _ tv) -> DHApp () acc (hsTyVarBndrToTyVarBind tv)) (DHead () $ rdrNameToName $ unLoc tcdLName) hsq_explicit)
@@ -297,12 +299,12 @@ hsDeclToDecl (TyClD _ (GHC.Hs.ClassDecl { tcdCtxt, tcdLName, tcdTyVars = HsQTvs 
         Nothing
 
 hsDeclToDecl (SigD _ (GHC.Hs.TypeSig _ names (HsWC { hswc_body = L _ HsSig { sig_body } }))) =
-    HSE.TypeSig
+    Just $ HSE.TypeSig
         ()
         (map (rdrNameToName . unLoc) names)
         (hsTypeToType $ unLoc sig_body)
 hsDeclToDecl (SigD _ (GHC.Hs.PatSynSig _ names (L _ HsSig { sig_body } ))) =
-    case hsTypeToType (unLoc sig_body) of
+    Just $ case hsTypeToType (unLoc sig_body) of
         TyForall () Nothing (Just ctx1) (TyForall () Nothing (Just ctx2) ty) ->
             HSE.PatSynSig
                 ()
@@ -331,39 +333,28 @@ hsDeclToDecl (SigD _ (GHC.Hs.PatSynSig _ names (L _ HsSig { sig_body } ))) =
                 Nothing
                 ty
 hsDeclToDecl (SigD _ (FixSig _ (FixitySig _ names (Fixity priority direction)))) =
-    InfixDecl
+    Just $ InfixDecl
         ()
         (fixityDirectionToAssoc direction)
         (Just priority)
         (map (varOpOrConOp . rdrNameToName . unLoc) names)
 
-hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsSig { sig_bndrs, sig_body }) } })) = case hsTypeToType (unLoc sig_body) of
-    TyForall () Nothing ctxt body ->
-        InstDecl
-            ()
-            Nothing
-            (IRule () (hsOuterTyVarBndrsToFoo sig_bndrs) ctxt (typeToInstHead body))
-            Nothing
-    body ->
-        InstDecl
-            ()
-            Nothing
-            (IRule () (hsOuterTyVarBndrsToFoo sig_bndrs) Nothing (typeToInstHead body))
-            Nothing
+hsDeclToDecl (InstD _ (ClsInstD {cid_inst = ClsInstDecl { cid_poly_ty = (L _ HsSig { sig_bndrs, sig_body }) } })) =
+    Just $ case hsTypeToType (unLoc sig_body) of
+        TyForall () Nothing ctxt body ->
+            InstDecl
+                ()
+                Nothing
+                (IRule () (hsOuterTyVarBndrsToFoo sig_bndrs) ctxt (typeToInstHead body))
+                Nothing
+        body ->
+            InstDecl
+                ()
+                Nothing
+                (IRule () (hsOuterTyVarBndrsToFoo sig_bndrs) Nothing (typeToInstHead body))
+                Nothing
 
--- TODO FIXME when migrating to ghc-lib-parser completely:
--- HSE does not support standalone kind signatures
-hsDeclToDecl (KindSigD _ (StandaloneKindSig _ x y)) =
-   HSE.GDataDecl
-        ()
-        (DataType ())
-        Nothing
-        (DHead () $ rdrNameToName $ unLoc x)
-        (Just $ hsTypeToType $ unLoc $ sig_body $ unLoc y)
-        []
-        []
-
-hsDeclToDecl hsDecl = error $ show hsDecl
+hsDeclToDecl hsDecl = Nothing
 
 injectivityAnnToInjectivityInfo :: InjectivityAnn GhcPs -> HSE.InjectivityInfo ()
 injectivityAnnToInjectivityInfo = \case
@@ -420,7 +411,8 @@ hsTyVarBndrToTyVarBind = \case
         UnkindedVar () (rdrNameToName var)
     HsTvb _ _ (HsBndrVar _ (L _ var)) (HsBndrKind _ (L _ kind)) ->
         KindedVar () (rdrNameToName var) (hsTypeToType kind)
-    tv -> error $ show tv
+    HsTvb _ _ (HsBndrWildCard _) _ ->
+        UnkindedVar () (Ident () "_")
 
 occNameToName :: OccName -> HSE.Name ()
 occNameToName occ = case occNameString occ of
@@ -487,7 +479,7 @@ hsTypeToType = \case
         applyTyForall (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_invis_bndrs) Nothing $
             hsTypeToType $ unLoc hst_body
     -- TODO FIXME when migrating to ghc-lib-parser completely:
-    -- HSE does not forall with visible binders
+    -- HSE does not support forall with visible binders
     HsForAllTy { hst_tele = HsForAllVis { hsf_vis_bndrs }, hst_body } ->
         applyTyForall (Just $ map (hsTyVarBndrToTyVarBind . unLoc) hsf_vis_bndrs) Nothing $
             hsTypeToType $ unLoc hst_body
@@ -526,17 +518,8 @@ hsTypeToType = \case
         TyUnboxedSum () $ map (hsTypeToType . unLoc) xs
     HsWildCardTy _ ->
         TyWildCard () Nothing
-    HsIParamTy _ _name ty ->
-        -- FIXME when migrating to ghc-lib-parser completely:
-        -- HSE does not quite support ImplicitParams in ConstraintKinds,
-        hsTypeToType $ unLoc ty
-    HsAppKindTy _ x y ->
-        -- FIXME when migrating to ghc-lib-parser completely:
-        -- HSE does not support syntax like
-        -- forall (r :: RuntimeRep) (a :: TYPE r). Maybe# @r a
-        TyApp () (hsTypeToType $ unLoc x) (hsTypeToType $ unLoc y)
-    ty ->
-        error $ show ty
+    -- Everything else cannot be represented in HSE, so replacing with a wildcard
+    _ -> TyWildCard () Nothing
 
 promotionFlagToMaybePromotedName :: PromotionFlag -> QName () -> MaybePromotedName ()
 promotionFlagToMaybePromotedName = \case
@@ -615,22 +598,27 @@ runGhcLibParser str = case runGhcLibParserEx almostAllExtensions str of
     PFailed{}
         | '#' `elem` str -> runGhcLibParserEx noUnboxed str
     res -> res
-    where
-        allExtensions = EnumSet.fromList [minBound..maxBound]
-        almostAllExtensions =
-            -- This extension makes "proc" a keyword
-            EnumSet.delete Arrows $
-            -- This extension makes "mdo" and "rec" keywords
-            EnumSet.delete RecursiveDo $
-            -- This extension makes "static" a keyword
-            EnumSet.delete StaticPointers $
-            -- This extension makes "by", "group" and "using" keywords
-            EnumSet.delete TransformListComp
-            allExtensions
-        noUnboxed =
-            EnumSet.delete UnboxedSums $
-            EnumSet.delete UnboxedTuples
-            almostAllExtensions
+
+allExtensions :: EnumSet.EnumSet Extension
+allExtensions = EnumSet.fromList [minBound..maxBound]
+
+almostAllExtensions :: EnumSet.EnumSet Extension
+almostAllExtensions =
+    -- This extension makes "proc" a keyword
+    EnumSet.delete Arrows $
+    -- This extension makes "mdo" and "rec" keywords
+    EnumSet.delete RecursiveDo $
+    -- This extension makes "static" a keyword
+    EnumSet.delete StaticPointers $
+    -- This extension makes "by", "group" and "using" keywords
+    EnumSet.delete TransformListComp
+    allExtensions
+
+noUnboxed :: EnumSet.EnumSet Extension
+noUnboxed =
+    EnumSet.delete UnboxedSums $
+    EnumSet.delete UnboxedTuples
+    almostAllExtensions
 
 runGhcLibParserEx
     :: EnumSet.EnumSet Extension
@@ -639,10 +627,9 @@ runGhcLibParserEx
 runGhcLibParserEx extensions str = unP parseDeclaration parseState
     where
         opts = mkParserOpts extensions emptyDiagOpts [] False False False False
-        filename = "<interactive>"
-        location = mkRealSrcLoc (mkFastString filename) 1 1
+        dummyLocation = mkRealSrcLoc mempty 1 1
         buffer = stringToStringBuffer str
-        parseState = initParserState opts buffer location
+        parseState = initParserState opts buffer dummyLocation
 
 unGADT (GDataDecl a b c d _  [] e) = HSE.DataDecl a b c d [] e
 unGADT x = x
