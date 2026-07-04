@@ -68,7 +68,7 @@ library
         hackage-revdeps >= 0.3 && < 0.5,
         old-locale,
         hashable,
-        haskell-src-exts >= 1.22 && < 1.24,
+        haskell-src-exts >= 1.22 && < 1.25,
         http-conduit >= 2.3,
         http-types,
         js-flot,
